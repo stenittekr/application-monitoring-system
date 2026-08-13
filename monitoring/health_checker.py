@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from app.extensions import db
 from app.models.application import Application
 from app.services.monitoring_service import run_health_check
-from app.services.notification_service import retry_failed_notifications
+from app.services.notification_service import retry_failed_notifications, check_escalations
 from app.services.server_service import check_missed_heartbeats
 
 logger = logging.getLogger("monitor.health_checker")
@@ -55,6 +55,12 @@ def run_monitoring_cycle():
     except Exception:
         db.session.rollback()
         logger.exception("Failed while retrying pending email notifications")
+
+    try:
+        check_escalations()
+    except Exception:
+        db.session.rollback()
+        logger.exception("Failed while checking incident escalations")
 
     if due:
         logger.info("Checked %d application(s) this cycle.", len(due))

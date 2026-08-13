@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 MAX_NOTIFICATION_RETRIES = 5
 WEBHOOK_TIMEOUT_SECONDS = 5
+ESCALATION_MINUTES_DEFAULT = "30"
 
 
 def _get_setting(key, default=None):
@@ -207,6 +208,65 @@ def maybe_send_reminder(incident, application):
         "This application is still unavailable.\n"
     )
     return _create_and_send(incident, application, "REMINDER", subject, body)
+
+
+def check_escalations():
+    """Re-notifies for OPEN incidents that have gone unacknowledged past the
+    configured escalation window - fires once per incident (escalated_at),
+    so this doesn't repeat every monitoring cycle."""
+    from app.models.incident import Incident
+
+    interval_minutes = int(_get_setting("escalation_minutes", ESCALATION_MINUTES_DEFAULT))
+    now = datetime.now(timezone.utc)
+    candidates = Incident.query.filter_by(
+        status="OPEN", escalated_at=None, notification_sent=True, acknowledged_at=None
+    ).all()
+    for incident in candidates:
+        detected = incident.detected_at
+        if detected.tzinfo is None:
+            detected = detected.replace(tzinfo=timezone.utc)
+        if (now - detected).total_seconds() < interval_minutes * 60:
+            continue
+        _send_escalation(incident)
+
+
+def _send_escalation(incident):
+    """Sends the one-time escalation notice for an incident nobody has acknowledged."""
+    if incident.application_id:
+        from app.models.application import Application
+        entity = db.session.get(Application, incident.application_id)
+        recipient = (entity.manager_email or entity.owner_email) if entity else None
+        label = entity.name if entity else f"application #{incident.application_id}"
+    else:
+        from app.models.server import Server
+        entity = db.session.get(Server, incident.server_id)
+        recipient = entity.owner_email if entity else None
+        label = entity.hostname if entity else f"server #{incident.server_id}"
+
+    if not recipient:
+        # Nothing to notify - mark escalated anyway so this doesn't get
+        # re-evaluated every cycle forever with no recipient to send to.
+        logger.warning("Cannot escalate incident #%s - no recipient configured.", incident.id)
+        incident.escalated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return
+
+    subject = f"[ESCALATION] Unacknowledged incident - {label}"
+    body = (
+        f"Incident #{incident.id} for {label} has been open and unacknowledged since "
+        f"{incident.detected_at.isoformat()}.\n"
+        f"Reason: {incident.reason or incident.error_message or 'N/A'}\n"
+    )
+    notification = Notification(
+        incident_id=incident.id, application_id=incident.application_id, server_id=incident.server_id,
+        notification_type="ESCALATION", recipient=recipient, subject=subject, status="PENDING",
+    )
+    db.session.add(notification)
+    db.session.commit()
+    _attempt_send(notification, body)
+    _post_webhook(f"*{label}* incident #{incident.id} still unacknowledged - escalating.")
+    incident.escalated_at = datetime.now(timezone.utc)
+    db.session.commit()
 
 
 def retry_failed_notifications():

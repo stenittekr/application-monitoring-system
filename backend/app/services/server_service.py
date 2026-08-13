@@ -13,12 +13,35 @@ from datetime import datetime, timedelta, timezone
 from app.extensions import db
 from app.models.server import Server
 from app.services import incident_service, notification_service
+from app.services.audit_service import log_activity
 
 logger = logging.getLogger(__name__)
 
 # How many missed intervals before we declare a server DOWN - one blip
 # (a slow network tick) shouldn't raise a false alarm.
 MISSED_INTERVALS_BEFORE_DOWN = 3
+
+# Estimated boot time (now - uptime) drifts a little every heartbeat from
+# clock skew and measurement jitter alone - only flag it as an actual
+# restart once the drift is bigger than that could plausibly explain.
+RESTART_DETECTION_TOLERANCE_SECONDS = 120
+
+
+def _detect_restart(server, uptime_seconds, now):
+    """Compares this heartbeat's estimated boot time against the last one
+    recorded; a jump bigger than clock-jitter tolerance means the server
+    actually rebooted since the previous heartbeat."""
+    if uptime_seconds is None:
+        return
+    estimated_boot_at = now - timedelta(seconds=uptime_seconds)
+    if server.last_boot_at is not None:
+        drift = abs((estimated_boot_at - server.last_boot_at).total_seconds())
+        if drift > RESTART_DETECTION_TOLERANCE_SECONDS:
+            log_activity(
+                None, "SERVER_RESTART_DETECTED", "Server", server.id,
+                f"{server.hostname} restarted (uptime reset to {uptime_seconds}s).",
+            )
+    server.last_boot_at = estimated_boot_at
 
 
 def _hash_token(token):
@@ -66,6 +89,7 @@ def record_heartbeat(server, data):
     """Updates a server's live metrics and resolves any open incident, since a
     heartbeat arriving at all means the server is reachable right now."""
     was_down = server.current_status == "DOWN"
+    _detect_restart(server, data.get("uptime_seconds"), datetime.now(timezone.utc))
     server.cpu_percent = data.get("cpu_percent")
     server.ram_percent = data.get("ram_percent")
     server.disk_percent = data.get("disk_percent")

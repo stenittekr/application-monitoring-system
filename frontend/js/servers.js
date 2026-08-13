@@ -20,7 +20,7 @@
     function renderTable() {
         const tbody = document.getElementById("servers-table-body");
         if (!servers.length) {
-            tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">
+            tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">
                 No servers enrolled yet. Run the agent's <code>enroll</code> command to register one.</td></tr>`;
             return;
         }
@@ -34,6 +34,7 @@
                 <td>${formatPercent(s.ram_percent)}</td>
                 <td>${formatPercent(s.disk_percent)}</td>
                 <td>${formatDateTime(s.last_heartbeat_at)}</td>
+                <td>${formatDateTime(s.last_boot_at)}</td>
                 <td>
                     <button class="btn btn-sm btn-outline-secondary" data-server-id="${s.id}">
                         ${s.discovered_services.length} services, ${s.discovered_ports.length} ports

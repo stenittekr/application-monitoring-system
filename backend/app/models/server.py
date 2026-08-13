@@ -31,6 +31,7 @@ class Server(db.Model):
     uptime_seconds = db.Column(db.Integer, nullable=True)
 
     last_heartbeat_at = db.Column(db.DateTime, nullable=True)
+    last_boot_at = db.Column(db.DateTime, nullable=True)  # estimated from uptime_seconds each heartbeat
 
     # Latest discovery snapshot, stored as JSON text - these are candidates for
     # review, not automatically monitored (matches the "Discovered, not yet
@@ -68,6 +69,7 @@ class Server(db.Model):
             "disk_percent": self.disk_percent,
             "uptime_seconds": self.uptime_seconds,
             "last_heartbeat_at": self.last_heartbeat_at.isoformat() if self.last_heartbeat_at else None,
+            "last_boot_at": self.last_boot_at.isoformat() if self.last_boot_at else None,
             "discovered_services": json.loads(self.discovered_services_json) if self.discovered_services_json else [],
             "discovered_ports": json.loads(self.discovered_ports_json) if self.discovered_ports_json else [],
             "created_at": self.created_at.isoformat() if self.created_at else None,

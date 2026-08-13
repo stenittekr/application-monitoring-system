@@ -53,6 +53,21 @@ def resolve_incident(incident, resolved_at):
     return incident
 
 
+def acknowledge(incident, user_id):
+    """Marks an incident acknowledged by a human - stops it from escalating further."""
+    incident.acknowledged_at = datetime.now(timezone.utc)
+    incident.acknowledged_by_id = user_id
+    db.session.commit()
+    return incident
+
+
+def assign(incident, user_id):
+    """Assigns an incident to a user for investigation."""
+    incident.assigned_to_id = user_id
+    db.session.commit()
+    return incident
+
+
 def list_incidents(application_id=None, status=None, environment=None, date_from=None, date_to=None):
     """Returns incidents matching the given filters, newest first."""
     from app.models.application import Application

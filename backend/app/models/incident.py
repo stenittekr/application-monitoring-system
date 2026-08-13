@@ -28,6 +28,11 @@ class Incident(db.Model):
     notification_sent = db.Column(db.Boolean, nullable=False, default=False)
     recovery_notification_sent = db.Column(db.Boolean, nullable=False, default=False)
 
+    acknowledged_at = db.Column(db.DateTime, nullable=True)
+    acknowledged_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    assigned_to_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    escalated_at = db.Column(db.DateTime, nullable=True)  # set once, so escalation only fires once per incident
+
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(
         db.DateTime,
@@ -38,6 +43,8 @@ class Incident(db.Model):
     notifications = db.relationship(
         "Notification", backref="incident", lazy="dynamic", cascade="all, delete-orphan"
     )
+    acknowledged_by = db.relationship("User", foreign_keys=[acknowledged_by_id])
+    assigned_to = db.relationship("User", foreign_keys=[assigned_to_id])
 
     def to_dict(self):
         """Serializes the incident into a JSON-friendly dict."""
@@ -55,6 +62,12 @@ class Incident(db.Model):
             "error_message": self.error_message,
             "notification_sent": self.notification_sent,
             "recovery_notification_sent": self.recovery_notification_sent,
+            "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None,
+            "acknowledged_by": {"id": self.acknowledged_by.id, "name": self.acknowledged_by.name}
+                if self.acknowledged_by else None,
+            "assigned_to": {"id": self.assigned_to.id, "name": self.assigned_to.name}
+                if self.assigned_to else None,
+            "escalated_at": self.escalated_at.isoformat() if self.escalated_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

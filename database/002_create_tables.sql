@@ -119,6 +119,7 @@ BEGIN
         uptime_seconds              INT            NULL,
 
         last_heartbeat_at           DATETIME2      NULL,
+        last_boot_at                DATETIME2      NULL,
 
         discovered_services_json    NVARCHAR(MAX)  NULL,
         discovered_ports_json       NVARCHAR(MAX)  NULL,
@@ -156,13 +157,22 @@ BEGIN
         notification_sent           BIT            NOT NULL DEFAULT 0,
         recovery_notification_sent  BIT            NOT NULL DEFAULT 0,
 
+        acknowledged_at             DATETIME2      NULL,
+        acknowledged_by_id          INT            NULL,
+        assigned_to_id              INT            NULL,
+        escalated_at                DATETIME2      NULL,
+
         created_at                  DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
         updated_at                  DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
 
         CONSTRAINT FK_incidents_application FOREIGN KEY (application_id)
             REFERENCES dbo.applications(id),
         CONSTRAINT FK_incidents_server FOREIGN KEY (server_id)
-            REFERENCES dbo.servers(id)
+            REFERENCES dbo.servers(id),
+        CONSTRAINT FK_incidents_acknowledged_by FOREIGN KEY (acknowledged_by_id)
+            REFERENCES dbo.users(id),
+        CONSTRAINT FK_incidents_assigned_to FOREIGN KEY (assigned_to_id)
+            REFERENCES dbo.users(id)
     );
 END
 GO
@@ -178,7 +188,7 @@ BEGIN
         application_id      INT            NULL,  -- exactly one of application_id/server_id is set
         server_id           INT            NULL,
 
-        notification_type   VARCHAR(20)    NOT NULL CHECK (notification_type IN ('DOWN','RECOVERY','REMINDER')),
+        notification_type   VARCHAR(20)    NOT NULL CHECK (notification_type IN ('DOWN','RECOVERY','REMINDER','ESCALATION')),
 
         recipient           NVARCHAR(255)  NOT NULL,
         cc                  NVARCHAR(255)  NULL,
