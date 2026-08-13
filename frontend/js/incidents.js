@@ -5,8 +5,10 @@
     let servers = [];
     let users = [];
     const user = getCurrentUser();
-    const canAct = user.role === "ADMIN" || user.role === "MANAGER";
-    const canAssign = user.role === "ADMIN"; // only ADMIN can list users to populate the assign dropdown
+    // ADMIN/IT_MANAGER/OPERATOR act on any incident; APP_OWNER only their own (enforced server-side).
+    const canAct = ["ADMIN", "IT_MANAGER", "OPERATOR", "APP_OWNER"].includes(user.role);
+    const canAssign = user.role === "ADMIN" || user.role === "IT_MANAGER"; // these roles can list users to populate the dropdown
+    const canSeeServers = ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"].includes(user.role); // APP_OWNER has no server access
 
     init();
 
@@ -14,7 +16,7 @@
     async function init() {
         try {
             applications = await api.get("/applications");
-            servers = await api.get("/servers");
+            if (canSeeServers) servers = await api.get("/servers");
             if (canAssign) users = await api.get("/users");
             populateFilters();
             await load();

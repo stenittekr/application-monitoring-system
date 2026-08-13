@@ -1,9 +1,15 @@
 (function () {
     initLayout("users");
 
+    // Only ADMIN can create/edit/disable users (IT_MANAGER can only view the
+    // list here, e.g. to pick who to assign an incident to elsewhere).
+    const isAdmin = getCurrentUser().role === "ADMIN";
+
     const modal = new bootstrap.Modal(document.getElementById("user-form-modal"));
-    // Opens the modal in "new user" mode.
-    document.getElementById("new-user-btn").addEventListener("click", () => openForm(null));
+    if (isAdmin) {
+        document.getElementById("new-user-btn").classList.remove("d-none");
+        document.getElementById("new-user-btn").addEventListener("click", () => openForm(null));
+    }
     document.getElementById("user-form").addEventListener("submit", onSubmit);
 
     load();
@@ -18,24 +24,34 @@
         }
     }
 
-    // Renders the users table rows, including edit and enable/disable buttons.
+    // Builds the edit/enable-disable action buttons for one user row (ADMIN only).
+    function actionCell(u) {
+        if (!isAdmin) return "-";
+        const toggleVariant = u.is_active ? "danger" : "success";
+        const toggleTitle = u.is_active ? "Disable" : "Enable";
+        const toggleIcon = u.is_active ? "bi-person-x" : "bi-person-check";
+        return `
+            <button class="btn btn-outline-secondary" title="Edit" onclick='window.__editUser(${JSON.stringify(u)})'><i class="bi bi-pencil"></i></button>
+            <button class="btn btn-outline-${toggleVariant}" title="${toggleTitle}" onclick="window.__toggleUser(${u.id}, ${!u.is_active})">
+                <i class="bi ${toggleIcon}"></i>
+            </button>`;
+    }
+
+    // Renders the users table rows, including edit and enable/disable buttons (ADMIN only).
     function renderTable(users) {
         const tbody = document.getElementById("users-table-body");
-        tbody.innerHTML = users.map((u) => `
+        tbody.innerHTML = users.map((u) => {
+            const statusLabel = u.is_active ? '<span class="text-success">Active</span>' : '<span class="text-muted">Disabled</span>';
+            return `
             <tr>
                 <td>${escapeHtml(u.name)}</td>
                 <td>${escapeHtml(u.email)}</td>
                 <td><span class="badge bg-primary-subtle text-primary-emphasis">${u.role}</span></td>
-                <td>${u.is_active ? '<span class="text-success">Active</span>' : '<span class="text-muted">Disabled</span>'}</td>
+                <td>${statusLabel}</td>
                 <td>${formatDateTime(u.last_login_at)}</td>
-                <td class="btn-group btn-group-sm">
-                    <button class="btn btn-outline-secondary" title="Edit" onclick='window.__editUser(${JSON.stringify(u)})'><i class="bi bi-pencil"></i></button>
-                    <button class="btn btn-outline-${u.is_active ? "danger" : "success"}" title="${u.is_active ? "Disable" : "Enable"}"
-                        onclick="window.__toggleUser(${u.id}, ${!u.is_active})">
-                        <i class="bi ${u.is_active ? "bi-person-x" : "bi-person-check"}"></i>
-                    </button>
-                </td>
-            </tr>`).join("");
+                <td class="btn-group btn-group-sm">${actionCell(u)}</td>
+            </tr>`;
+        }).join("");
     }
 
     // Fills the create/edit form with an existing user's data (or blank defaults) and opens the modal.
@@ -44,7 +60,7 @@
         document.getElementById("user-id").value = user ? user.id : "";
         document.getElementById("user-name").value = user ? user.name : "";
         document.getElementById("user-email").value = user ? user.email : "";
-        document.getElementById("user-role").value = user ? user.role : "VIEWER";
+        document.getElementById("user-role").value = user ? user.role : "AUDITOR";
         document.getElementById("user-password").value = "";
         document.getElementById("user-password").required = !user;
         document.getElementById("user-password-hint").style.display = user ? "block" : "none";

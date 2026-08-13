@@ -29,7 +29,7 @@ def _get_filters():
 
 
 @bp.get("/availability")
-@roles_required("ADMIN", "MANAGER")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR")
 def availability():
     """Returns the availability report for the requested application and date range."""
     application_id, environment, date_from, date_to = _get_filters()
@@ -38,7 +38,7 @@ def availability():
 
 
 @bp.get("/availability/daily")
-@roles_required("ADMIN", "MANAGER")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR")
 def daily_availability():
     """Returns day-by-day availability figures for a single application."""
     application_id = request.args.get("application_id", type=int)
@@ -50,7 +50,7 @@ def daily_availability():
 
 
 @bp.get("/failure-frequency")
-@roles_required("ADMIN", "MANAGER")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR")
 def failure_frequency():
     """Returns how often failures occurred for the requested application and date range."""
     application_id, _, date_from, date_to = _get_filters()
@@ -59,7 +59,7 @@ def failure_frequency():
 
 
 @bp.get("/availability/export")
-@roles_required("ADMIN", "MANAGER")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR")
 def export_availability():
     """Exports the availability report as a downloadable CSV file."""
     application_id, environment, date_from, date_to = _get_filters()

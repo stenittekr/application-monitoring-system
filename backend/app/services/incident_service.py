@@ -68,8 +68,10 @@ def assign(incident, user_id):
     return incident
 
 
-def list_incidents(application_id=None, status=None, environment=None, date_from=None, date_to=None):
-    """Returns incidents matching the given filters, newest first."""
+def list_incidents(application_id=None, status=None, environment=None, date_from=None, date_to=None, user=None):
+    """Returns incidents matching the given filters, newest first. An APP_OWNER
+    only ever sees incidents for applications they own/manage, and never
+    server incidents (out of that role's scope per the requirements doc)."""
     from app.models.application import Application
 
     query = Incident.query.outerjoin(Application, Incident.application_id == Application.id)
@@ -83,4 +85,22 @@ def list_incidents(application_id=None, status=None, environment=None, date_from
         query = query.filter(Incident.started_at >= date_from)
     if date_to:
         query = query.filter(Incident.started_at <= date_to)
+    if user is not None and user.role == "APP_OWNER":
+        query = query.filter(
+            Incident.server_id.is_(None),
+            db.or_(Application.owner_email == user.email, Application.manager_email == user.email),
+        )
     return query.order_by(Incident.started_at.desc()).all()
+
+
+def is_authorized_for_incident(user, incident):
+    """Every role except APP_OWNER can see/act on any incident; an
+    Application Owner is restricted to incidents on applications they own or
+    manage, and never server incidents."""
+    if user.role != "APP_OWNER":
+        return True
+    if incident.server_id is not None:
+        return False
+    from app.models.application import Application
+    app_row = db.session.get(Application, incident.application_id)
+    return bool(app_row) and (app_row.owner_email == user.email or app_row.manager_email == user.email)

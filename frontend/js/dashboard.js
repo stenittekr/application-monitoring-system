@@ -6,7 +6,7 @@
     setInterval(load, 30000); // ponytail: fixed 30s poll, add a setting if that ever needs tuning
 
     const user = getCurrentUser();
-    if (user.role === "ADMIN") {
+    if (user.role === "ADMIN" || user.role === "IT_MANAGER") {
         const modal = new bootstrap.Modal(document.getElementById("new-app-modal"));
         document.getElementById("new-app-btn").classList.remove("d-none");
         document.getElementById("new-app-btn").addEventListener("click", () => modal.show());

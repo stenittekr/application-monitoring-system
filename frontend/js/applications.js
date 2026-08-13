@@ -17,7 +17,7 @@
     // Sets up and drives the applications list page (table, create/edit modal, actions).
     function runApplicationsList() {
         const user = getCurrentUser();
-        const isAdmin = user.role === "ADMIN";
+        const isAdmin = user.role === "ADMIN" || user.role === "IT_MANAGER";
         const modalEl = document.getElementById("app-form-modal");
         const modal = new bootstrap.Modal(modalEl);
         const form = document.getElementById("app-form");
@@ -224,16 +224,19 @@
             }
         }
 
-        // Renders the page title, status badge, and (for admins) the edit/run-check buttons.
+        // Renders the page title, status badge, and (per role/ownership) the edit/run-check buttons.
         function renderHeader(app) {
             document.getElementById("details-name").textContent = app.name;
             document.getElementById("details-status").innerHTML = statusBadge(app.current_status);
             const user = getCurrentUser();
-            if (user.role === "ADMIN") {
-                document.getElementById("details-actions").innerHTML = `
-                    <button class="btn btn-outline-secondary" onclick="window.__editFromDetails()"><i class="bi bi-pencil"></i> Edit</button>
-                    <button class="btn btn-outline-secondary" onclick="window.__runCheckFromDetails(${app.id})"><i class="bi bi-play-circle"></i> Run Check</button>`;
-            }
+            const ownsApp = app.owner_email === user.email || app.manager_email === user.email;
+            const canEdit = user.role === "ADMIN" || user.role === "IT_MANAGER" || (user.role === "APP_OWNER" && ownsApp);
+            const canRunCheck = canEdit || user.role === "OPERATOR";
+
+            const buttons = [];
+            if (canEdit) buttons.push(`<button class="btn btn-outline-secondary" onclick="window.__editFromDetails()"><i class="bi bi-pencil"></i> Edit</button>`);
+            if (canRunCheck) buttons.push(`<button class="btn btn-outline-secondary" onclick="window.__runCheckFromDetails(${app.id})"><i class="bi bi-play-circle"></i> Run Check</button>`);
+            document.getElementById("details-actions").innerHTML = buttons.join(" ");
             window.__currentApp = app;
         }
 

@@ -13,7 +13,7 @@
     <div class="card border-0 shadow-sm">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <span class="fw-semibold"><i class="bi bi-people me-2"></i>Users</span>
-            <button class="btn btn-sm btn-primary" id="new-user-btn"><i class="bi bi-plus-lg"></i> New User</button>
+            <button class="btn btn-sm btn-primary d-none" id="new-user-btn"><i class="bi bi-plus-lg"></i> New User</button>
         </div>
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
@@ -47,9 +47,11 @@
                     <div class="mb-3">
                         <label class="form-label">Role</label>
                         <select class="form-select" id="user-role">
-                            <option value="ADMIN">ADMIN</option>
-                            <option value="MANAGER">MANAGER</option>
-                            <option value="VIEWER">VIEWER</option>
+                            <option value="ADMIN">Platform Administrator</option>
+                            <option value="IT_MANAGER">IT Manager</option>
+                            <option value="APP_OWNER">Application Owner</option>
+                            <option value="OPERATOR">IT Support / Operator</option>
+                            <option value="AUDITOR">Auditor / Management</option>
                         </select>
                     </div>
                     <div class="mb-3">

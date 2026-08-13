@@ -12,9 +12,9 @@ bp = Blueprint("users", __name__, url_prefix="/api/users")
 
 
 @bp.get("")
-@roles_required("ADMIN")
+@roles_required("ADMIN", "IT_MANAGER")
 def list_users():
-    """Returns all users ordered by name."""
+    """Returns all users ordered by name - IT_MANAGER needs this to assign incidents."""
     users = User.query.order_by(User.name.asc()).all()
     return success_response([u.to_dict() for u in users])
 
@@ -27,7 +27,7 @@ def create_user():
     name = (data.get("name") or "").strip()
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
-    role = (data.get("role") or "VIEWER").upper()
+    role = (data.get("role") or "AUDITOR").upper()
 
     if not name or not email or not password:
         return error_response("Name, email and password are required.", "VALIDATION_ERROR", 422)

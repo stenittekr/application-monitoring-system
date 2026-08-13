@@ -14,13 +14,21 @@ APPLICATION_FIELDS = (
 
 
 def list_applications(user):
-    """Returns all non-deleted applications, restricted to owned/managed ones for MANAGER users."""
+    """Returns all non-deleted applications, restricted to owned/managed ones for APP_OWNER users."""
     query = Application.query.filter(Application.deleted_at.is_(None))
-    if user.role == "MANAGER":
+    if user.role == "APP_OWNER":
         query = query.filter(
             db.or_(Application.manager_email == user.email, Application.owner_email == user.email)
         )
     return query.order_by(Application.name.asc()).all()
+
+
+def is_authorized_for_application(user, app_row):
+    """Every role except APP_OWNER can see/act on any application; an
+    Application Owner is restricted to applications they own or manage."""
+    if user.role != "APP_OWNER":
+        return True
+    return app_row.owner_email == user.email or app_row.manager_email == user.email
 
 
 def get_application(application_id):

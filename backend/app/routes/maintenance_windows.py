@@ -13,7 +13,7 @@ bp = Blueprint("maintenance_windows", __name__, url_prefix="/api/maintenance-win
 
 
 @bp.get("")
-@roles_required("ADMIN", "MANAGER")
+@roles_required("ADMIN", "IT_MANAGER")
 def list_windows():
     """Returns all maintenance windows, most recent first."""
     rows = MaintenanceWindow.query.order_by(MaintenanceWindow.starts_at.desc()).all()
@@ -21,7 +21,7 @@ def list_windows():
 
 
 @bp.post("")
-@roles_required("ADMIN")
+@roles_required("ADMIN", "IT_MANAGER")
 def create_window():
     """Creates a new scheduled maintenance window."""
     data = request.get_json(silent=True) or {}
@@ -52,7 +52,7 @@ def create_window():
 
 
 @bp.delete("/<int:window_id>")
-@roles_required("ADMIN")
+@roles_required("ADMIN", "IT_MANAGER")
 def delete_window(window_id):
     """Cancels (deletes) a scheduled maintenance window."""
     window = db.session.get(MaintenanceWindow, window_id)

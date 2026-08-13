@@ -17,7 +17,7 @@ BEGIN
         name            NVARCHAR(150)   NOT NULL,
         email           NVARCHAR(255)   NOT NULL UNIQUE,
         password_hash   NVARCHAR(255)   NOT NULL,
-        role            VARCHAR(20)     NOT NULL CHECK (role IN ('ADMIN','MANAGER','VIEWER')),
+        role            VARCHAR(20)     NOT NULL CHECK (role IN ('ADMIN','IT_MANAGER','APP_OWNER','OPERATOR','AUDITOR')),
         is_active       BIT             NOT NULL DEFAULT 1,
         created_at      DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
         updated_at      DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),

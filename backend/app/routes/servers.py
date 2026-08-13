@@ -1,5 +1,4 @@
 from flask import Blueprint, request
-from flask_jwt_extended import jwt_required
 
 from app.auth.decorators import roles_required
 from app.extensions import limiter
@@ -8,16 +7,20 @@ from app.utils.responses import success_response, error_response
 
 bp = Blueprint("servers", __name__, url_prefix="/api/servers")
 
+# Servers are out of scope for APP_OWNER per the requirements doc - that role
+# is restricted to its own applications, not infrastructure.
+VIEW_ROLES = ("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR")
+
 
 @bp.get("")
-@jwt_required()
+@roles_required(*VIEW_ROLES)
 def list_servers():
     """Returns every enrolled server, for the dashboard."""
     return success_response([s.to_dict() for s in server_service.list_servers()])
 
 
 @bp.get("/<int:server_id>")
-@jwt_required()
+@roles_required(*VIEW_ROLES)
 def get_server(server_id):
     """Returns a single server's detail."""
     server = server_service.get_server(server_id)

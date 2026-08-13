@@ -2,11 +2,17 @@ from datetime import datetime, timezone
 
 from app.extensions import db, bcrypt
 
-ROLES = ("ADMIN", "MANAGER", "VIEWER")
+# Matches Section 4 (Users and Roles) of the platform requirements doc:
+#   ADMIN       - Platform Administrator: full configuration/enrollment/users/security/audit access
+#   IT_MANAGER  - views everything, approves maintenance/profiles/reports, manages incidents fleet-wide
+#   APP_OWNER   - restricted to their own applications (owner_email/manager_email match); acknowledges own incidents
+#   OPERATOR    - IT Support: monitors everything, acknowledges incidents, runs on-demand diagnostics
+#   AUDITOR     - Auditor/Management: read-only across dashboards, reports, and the audit trail
+ROLES = ("ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR")
 
 
 class User(db.Model):
-    """Database model for a system user (admin, manager, or viewer)."""
+    """Database model for a system user (one of the five roles in ROLES above)."""
 
     __tablename__ = "users"
 
@@ -14,7 +20,7 @@ class User(db.Model):
     name = db.Column(db.String(150), nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(20), nullable=False, default="VIEWER")
+    role = db.Column(db.String(20), nullable=False, default="AUDITOR")
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(

@@ -185,12 +185,20 @@ function confirmAction(message) {
 
 /* ---------------------------- App shell ---------------------------- */
 
+// Role legend (Section 4 of the requirements doc):
+//   ADMIN       - Platform Administrator, full access
+//   IT_MANAGER  - views everything, approves maintenance, manages incidents fleet-wide
+//   APP_OWNER   - restricted to their own applications
+//   OPERATOR    - IT Support, monitors everything, acknowledges incidents
+//   AUDITOR     - Auditor/Management, read-only across dashboards/reports/audit trail
 const NAV_ITEMS = [
-    { key: "dashboard", label: "Dashboard", href: "dashboard.html", icon: "bi-speedometer2", roles: ["ADMIN", "MANAGER", "VIEWER"] },
-    { key: "incidents", label: "Incidents", href: "incidents.html", icon: "bi-exclamation-triangle", roles: ["ADMIN", "MANAGER", "VIEWER"] },
-    { key: "health-checks", label: "Health Checks", href: "health-checks.html", icon: "bi-heart-pulse", roles: ["ADMIN", "MANAGER", "VIEWER"] },
-    { key: "servers", label: "Servers", href: "servers.html", icon: "bi-hdd-network", roles: ["ADMIN", "MANAGER", "VIEWER"] },
-    { key: "users", label: "Users", href: "users.html", icon: "bi-people", roles: ["ADMIN"] },
+    { key: "dashboard", label: "Dashboard", href: "dashboard.html", icon: "bi-speedometer2", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
+    { key: "incidents", label: "Incidents", href: "incidents.html", icon: "bi-exclamation-triangle", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
+    { key: "health-checks", label: "Health Checks", href: "health-checks.html", icon: "bi-heart-pulse", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
+    { key: "servers", label: "Servers", href: "servers.html", icon: "bi-hdd-network", roles: ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"] },
+    { key: "reports", label: "Reports", href: "reports.html", icon: "bi-bar-chart", roles: ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"] },
+    { key: "activity-logs", label: "Activity Logs", href: "activity-logs.html", icon: "bi-journal-text", roles: ["ADMIN", "IT_MANAGER", "AUDITOR"] },
+    { key: "users", label: "Users", href: "users.html", icon: "bi-people", roles: ["ADMIN", "IT_MANAGER"] },
     { key: "settings", label: "Settings", href: "settings.html", icon: "bi-gear", roles: ["ADMIN"] },
 ];
 

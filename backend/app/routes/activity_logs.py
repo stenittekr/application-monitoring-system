@@ -10,7 +10,7 @@ bp = Blueprint("activity_logs", __name__, url_prefix="/api/activity-logs")
 
 
 @bp.get("")
-@roles_required("ADMIN")
+@roles_required("ADMIN", "IT_MANAGER", "AUDITOR")
 def list_activity_logs():
     """Returns activity log entries filtered by user, entity type, action, and date."""
     query = ActivityLog.query

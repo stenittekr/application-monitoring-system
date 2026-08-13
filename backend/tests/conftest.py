@@ -60,13 +60,23 @@ def admin_user(db):
 
 
 @pytest.fixture()
-def manager_user(db):
-    return _make_user(db, "Manager", "manager@test.com", "Passw0rd!", "MANAGER")
+def it_manager_user(db):
+    return _make_user(db, "IT Manager", "itmanager@test.com", "Passw0rd!", "IT_MANAGER")
 
 
 @pytest.fixture()
-def viewer_user(db):
-    return _make_user(db, "Viewer", "viewer@test.com", "Passw0rd!", "VIEWER")
+def app_owner_user(db):
+    return _make_user(db, "App Owner", "appowner@test.com", "Passw0rd!", "APP_OWNER")
+
+
+@pytest.fixture()
+def operator_user(db):
+    return _make_user(db, "Operator", "operator@test.com", "Passw0rd!", "OPERATOR")
+
+
+@pytest.fixture()
+def auditor_user(db):
+    return _make_user(db, "Auditor", "auditor@test.com", "Passw0rd!", "AUDITOR")
 
 
 def _auth_header(client, email, password):
@@ -81,13 +91,23 @@ def admin_headers(client, admin_user):
 
 
 @pytest.fixture()
-def manager_headers(client, manager_user):
-    return _auth_header(client, "manager@test.com", "Passw0rd!")
+def it_manager_headers(client, it_manager_user):
+    return _auth_header(client, "itmanager@test.com", "Passw0rd!")
 
 
 @pytest.fixture()
-def viewer_headers(client, viewer_user):
-    return _auth_header(client, "viewer@test.com", "Passw0rd!")
+def app_owner_headers(client, app_owner_user):
+    return _auth_header(client, "appowner@test.com", "Passw0rd!")
+
+
+@pytest.fixture()
+def operator_headers(client, operator_user):
+    return _auth_header(client, "operator@test.com", "Passw0rd!")
+
+
+@pytest.fixture()
+def auditor_headers(client, auditor_user):
+    return _auth_header(client, "auditor@test.com", "Passw0rd!")
 
 
 @pytest.fixture()
@@ -101,7 +121,7 @@ def sample_application(db, admin_user):
         owner_name="Owner",
         owner_email="owner@test.com",
         manager_name="Manager",
-        manager_email="manager@test.com",
+        manager_email="appowner@test.com",
         monitoring_enabled=True,
         monitoring_interval=60,
         timeout=5,

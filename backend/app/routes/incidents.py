@@ -14,6 +14,11 @@ from app.utils.responses import success_response, error_response
 bp = Blueprint("incidents", __name__, url_prefix="/api/incidents")
 
 
+def _current_user():
+    """Fetches the User row for the currently authenticated JWT identity."""
+    return db.session.get(User, int(get_jwt_identity()))
+
+
 def _parse_date(value):
     """Parses an ISO 8601 date string, returning None if it is missing or invalid."""
     if not value:
@@ -27,14 +32,17 @@ def _parse_date(value):
 @bp.get("")
 @jwt_required()
 def list_incidents():
-    """Returns incidents filtered by application, status, environment, and date range."""
+    """Returns incidents filtered by application, status, environment, and date range,
+    scoped to owned/managed applications only for an APP_OWNER."""
     application_id = request.args.get("application_id", type=int)
     status = request.args.get("status")
     environment = request.args.get("environment")
     date_from = _parse_date(request.args.get("date_from"))
     date_to = _parse_date(request.args.get("date_to"))
 
-    incidents = incident_service.list_incidents(application_id, status, environment, date_from, date_to)
+    incidents = incident_service.list_incidents(
+        application_id, status, environment, date_from, date_to, user=_current_user()
+    )
     return success_response([i.to_dict() for i in incidents])
 
 
@@ -45,16 +53,20 @@ def get_incident(incident_id):
     incident = db.session.get(Incident, incident_id)
     if not incident:
         return error_response("Incident not found.", "INCIDENT_NOT_FOUND", 404)
+    if not incident_service.is_authorized_for_incident(_current_user(), incident):
+        return error_response("You do not have access to this incident.", "FORBIDDEN", 403)
     return success_response(incident.to_dict())
 
 
 @bp.post("/<int:incident_id>/acknowledge")
-@roles_required("ADMIN", "MANAGER")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "APP_OWNER")
 def acknowledge_incident(incident_id):
     """Marks an incident acknowledged by the current user, halting further escalation."""
     incident = db.session.get(Incident, incident_id)
     if not incident:
         return error_response("Incident not found.", "INCIDENT_NOT_FOUND", 404)
+    if not incident_service.is_authorized_for_incident(_current_user(), incident):
+        return error_response("You do not have access to this incident.", "FORBIDDEN", 403)
     if incident.acknowledged_at:
         return error_response("Incident is already acknowledged.", "ALREADY_ACKNOWLEDGED", 409)
     user_id = int(get_jwt_identity())
@@ -65,7 +77,7 @@ def acknowledge_incident(incident_id):
 
 
 @bp.post("/<int:incident_id>/assign")
-@roles_required("ADMIN", "MANAGER")
+@roles_required("ADMIN", "IT_MANAGER")
 def assign_incident(incident_id):
     """Assigns an incident to a user for investigation."""
     incident = db.session.get(Incident, incident_id)

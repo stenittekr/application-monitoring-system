@@ -2,9 +2,11 @@
 -- 004_create_seed_data.sql
 -- Development seed data: one user per role + sample applications.
 -- Passwords below are bcrypt hashes (never plaintext):
---   admin@example.com    -> Admin@123
---   manager@example.com  -> Manager@123
---   viewer@example.com   -> Viewer@123
+--   admin@example.com      -> Admin@123
+--   itmanager@example.com  -> ItManager@123
+--   appowner@example.com   -> AppOwner@123
+--   operator@example.com   -> Operator@123
+--   auditor@example.com    -> Auditor@123
 -- Change these passwords immediately in any non-local environment.
 -- =========================================================
 
@@ -15,13 +17,21 @@ IF NOT EXISTS (SELECT 1 FROM dbo.users WHERE email = 'admin@example.com')
 INSERT INTO dbo.users (name, email, password_hash, role, is_active)
 VALUES ('System Admin', 'admin@example.com', '$2b$12$sDq6aBANguBo9FPQ/zS8RuVRTvVp8Wxckc9Il4Y5KA7rzPZqg/jp6', 'ADMIN', 1);
 
-IF NOT EXISTS (SELECT 1 FROM dbo.users WHERE email = 'manager@example.com')
+IF NOT EXISTS (SELECT 1 FROM dbo.users WHERE email = 'itmanager@example.com')
 INSERT INTO dbo.users (name, email, password_hash, role, is_active)
-VALUES ('Jane Manager', 'manager@example.com', '$2b$12$lws9tYxm7FS9Yvbc0GhrQOriEJhNbuwinnXG3JCeapfqVseIJoFQa', 'MANAGER', 1);
+VALUES ('Jane ITManager', 'itmanager@example.com', '$2b$12$wzv5pjxs2IKutRh6I6sgbecsCuoLBGe4yPw5eNMYBcb.YOU9y1Hmy', 'IT_MANAGER', 1);
 
-IF NOT EXISTS (SELECT 1 FROM dbo.users WHERE email = 'viewer@example.com')
+IF NOT EXISTS (SELECT 1 FROM dbo.users WHERE email = 'appowner@example.com')
 INSERT INTO dbo.users (name, email, password_hash, role, is_active)
-VALUES ('Vince Viewer', 'viewer@example.com', '$2b$12$EaRedAnMSZa5Y3i5nQBwqurtRc2osRxsHGge/lbJupMcbhv.TPrC2', 'VIEWER', 1);
+VALUES ('Oscar AppOwner', 'appowner@example.com', '$2b$12$zblShYH1TfNFHeKuy7MZSOC.1h86Hl9YunHoKLLwcdzooVV7JbZ0O', 'APP_OWNER', 1);
+
+IF NOT EXISTS (SELECT 1 FROM dbo.users WHERE email = 'operator@example.com')
+INSERT INTO dbo.users (name, email, password_hash, role, is_active)
+VALUES ('Olivia Operator', 'operator@example.com', '$2b$12$rtrJ/UjgpnYgsLe.WdV1.OC7/n/zxnOaAds90/OFYjpP3CRTnQ1xi', 'OPERATOR', 1);
+
+IF NOT EXISTS (SELECT 1 FROM dbo.users WHERE email = 'auditor@example.com')
+INSERT INTO dbo.users (name, email, password_hash, role, is_active)
+VALUES ('Vince Auditor', 'auditor@example.com', '$2b$12$2ae413MSGfSXJqBlzgKTh.2Y6ZCKbqBYfxmZgiIif8GtfmGsKB..a', 'AUDITOR', 1);
 GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.applications WHERE name = 'Example Public Website')
