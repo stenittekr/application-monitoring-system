@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# Environment / secrets
+.env
+*.env.local
+
+# Databases (local/dev only - real data lives in SQL Server)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+monitoring/logs/
+*.log
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
