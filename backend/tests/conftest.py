@@ -15,8 +15,8 @@ from app.models.user import User
 
 class TestConfig(Config):
     TESTING = True
-    SECRET_KEY = "test-secret"
-    JWT_SECRET_KEY = "test-jwt-secret"
+    SECRET_KEY = "test-secret-key-at-least-32-bytes-long"
+    JWT_SECRET_KEY = "test-jwt-secret-key-at-least-32-bytes-long"
     SQLALCHEMY_DATABASE_URI = "sqlite://"
     SQLALCHEMY_ENGINE_OPTIONS = {
         "connect_args": {"check_same_thread": False},

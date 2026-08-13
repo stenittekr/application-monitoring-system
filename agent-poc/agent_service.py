@@ -1,0 +1,54 @@
+"""Windows Service wrapper around agent.py's heartbeat loop, so the agent
+survives reboots and runs with nobody logged in. Requires pywin32
+(pip install pywin32) and an elevated (Administrator) terminal to install.
+
+One-time setup on a machine that has already run `agent.py enroll`
+(so C:\\ProgramData\\AMNS-Agent\\config.json exists):
+
+    python agent_service.py --startup auto install
+    python agent_service.py start
+
+--startup auto sets the service's Windows startup type to Automatic, which
+is what makes it come back up after a reboot with nobody logging in.
+
+To stop watching logs / uninstall:
+    python agent_service.py stop
+    python agent_service.py remove
+
+Check status any time with: sc query AMNSAgent
+"""
+import threading
+
+import servicemanager
+import win32event
+import win32service
+import win32serviceutil
+
+import agent
+import agent_config
+
+
+class AgentService(win32serviceutil.ServiceFramework):
+    _svc_name_ = "AMNSAgent"
+    _svc_display_name_ = "Central Monitoring Agent"
+    _svc_description_ = "Sends heartbeat and system metrics to the Central Monitoring & Diagnostic Platform."
+
+    def __init__(self, args):
+        win32serviceutil.ServiceFramework.__init__(self, args)
+        self.stop_event = threading.Event()
+
+    def SvcStop(self):
+        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+        self.stop_event.set()
+
+    def SvcDoRun(self):
+        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED,
+                               (self._svc_name_, ""))
+        try:
+            agent.run_from_config(agent_config.DEFAULT_CONFIG_PATH, stop_event=self.stop_event)
+        except Exception as exc:
+            servicemanager.LogErrorMsg(f"AMNS Agent crashed: {exc}")
+
+
+if __name__ == "__main__":
+    win32serviceutil.HandleCommandLine(AgentService)

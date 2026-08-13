@@ -31,8 +31,20 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_incidents_application_
     CREATE INDEX IX_incidents_application_id ON dbo.incidents(application_id);
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_incidents_server_id')
+    CREATE INDEX IX_incidents_server_id ON dbo.incidents(server_id);
+GO
+
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_incidents_status')
     CREATE INDEX IX_incidents_status ON dbo.incidents(status);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_servers_current_status')
+    CREATE INDEX IX_servers_current_status ON dbo.servers(current_status);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_servers_deleted_at')
+    CREATE INDEX IX_servers_deleted_at ON dbo.servers(deleted_at);
 GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_activity_logs_created_at')

@@ -92,13 +92,53 @@ END
 GO
 
 -- -----------------------------------------------------------
--- incidents: confirmed outages (one active incident per app)
+-- servers: enrolled agents/servers being monitored via heartbeat
+-- -----------------------------------------------------------
+IF OBJECT_ID('dbo.servers', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.servers (
+        id                          INT IDENTITY(1,1) PRIMARY KEY,
+        hostname                    NVARCHAR(255)  NOT NULL,
+        ip_address                  VARCHAR(64)    NULL,
+        os_name                     NVARCHAR(100)  NULL,
+        os_version                  NVARCHAR(255)  NULL,
+        agent_version               VARCHAR(50)    NULL,
+
+        token_hash                  CHAR(64)       NOT NULL,  -- sha256 hex digest of the agent's secret
+
+        owner_name                  NVARCHAR(150)  NULL,
+        owner_email                 NVARCHAR(255)  NULL,
+
+        heartbeat_interval_seconds  INT            NOT NULL DEFAULT 60,
+        current_status              VARCHAR(20)    NOT NULL DEFAULT 'UNKNOWN'
+                                       CHECK (current_status IN ('UP','DOWN','UNKNOWN')),
+
+        cpu_percent                 FLOAT          NULL,
+        ram_percent                 FLOAT          NULL,
+        disk_percent                FLOAT          NULL,
+        uptime_seconds              INT            NULL,
+
+        last_heartbeat_at           DATETIME2      NULL,
+
+        discovered_services_json    NVARCHAR(MAX)  NULL,
+        discovered_ports_json       NVARCHAR(MAX)  NULL,
+
+        created_at                  DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
+        updated_at                  DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
+        deleted_at                  DATETIME2      NULL
+    );
+END
+GO
+
+-- -----------------------------------------------------------
+-- incidents: confirmed outages (one active incident per app/server)
 -- -----------------------------------------------------------
 IF OBJECT_ID('dbo.incidents', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.incidents (
         id                          INT IDENTITY(1,1) PRIMARY KEY,
-        application_id              INT            NOT NULL,
+        application_id              INT            NULL,  -- exactly one of application_id/server_id is set
+        server_id                   INT            NULL,
 
         status                      VARCHAR(20)    NOT NULL DEFAULT 'OPEN'
                                        CHECK (status IN ('OPEN','RESOLVED')),
@@ -120,7 +160,9 @@ BEGIN
         updated_at                  DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
 
         CONSTRAINT FK_incidents_application FOREIGN KEY (application_id)
-            REFERENCES dbo.applications(id)
+            REFERENCES dbo.applications(id),
+        CONSTRAINT FK_incidents_server FOREIGN KEY (server_id)
+            REFERENCES dbo.servers(id)
     );
 END
 GO
@@ -133,7 +175,8 @@ BEGIN
     CREATE TABLE dbo.notifications (
         id                  INT IDENTITY(1,1) PRIMARY KEY,
         incident_id         INT            NOT NULL,
-        application_id      INT            NOT NULL,
+        application_id      INT            NULL,  -- exactly one of application_id/server_id is set
+        server_id           INT            NULL,
 
         notification_type   VARCHAR(20)    NOT NULL CHECK (notification_type IN ('DOWN','RECOVERY','REMINDER')),
 
@@ -154,7 +197,9 @@ BEGIN
         CONSTRAINT FK_notifications_incident FOREIGN KEY (incident_id)
             REFERENCES dbo.incidents(id),
         CONSTRAINT FK_notifications_application FOREIGN KEY (application_id)
-            REFERENCES dbo.applications(id)
+            REFERENCES dbo.applications(id),
+        CONSTRAINT FK_notifications_server FOREIGN KEY (server_id)
+            REFERENCES dbo.servers(id)
     );
 END
 GO
