@@ -46,6 +46,13 @@ def checklist(items):
         doc.add_paragraph(f"\u2610  {item}")
 
 
+def warn_note(text):
+    p = doc.add_paragraph()
+    run = p.add_run(text)
+    run.bold = True
+    run.font.color.rgb = WARN
+
+
 def code(text):
     p = doc.add_paragraph()
     run = p.add_run(text)
@@ -126,6 +133,16 @@ bullets([
     "Administrator rights, needed only once, to register the Windows Service",
 ])
 body("No other software, no database driver, and no reboot is required to install these prerequisites.")
+warn_note(
+    "Install dependencies (Section 3, step 3) from an elevated (Administrator) "
+    "terminal, even though that step alone doesn't strictly need admin rights. "
+    "Installing from a normal terminal first silently installs packages to a "
+    "per-user location that the Windows Service (which runs as LocalSystem) "
+    "cannot see - the service will then install and appear to start, but crash "
+    "immediately with 'ModuleNotFoundError: No module named psutil'. This was "
+    "hit and fixed once already during testing; installing from an elevated "
+    "terminal from the start avoids it entirely."
+)
 
 # ------------------------------------------------------- 2 ports/firewall --
 h2("2", "Required ports and firewall rules")

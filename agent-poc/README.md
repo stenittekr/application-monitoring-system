@@ -29,9 +29,30 @@ HTTPS to the platform's address.
 
 ## 1. Install dependencies
 
+**Do this from an elevated (Administrator) terminal, even though this step alone
+doesn't strictly need admin rights.** If you install from a normal terminal first,
+pip silently falls back to a per-user package location; when the Windows Service
+later runs as LocalSystem (Section 3), it cannot see that per-user location at
+all, and the service will install "successfully" but crash immediately with
+`ModuleNotFoundError: No module named 'psutil'` the moment it tries to start.
+Installing from an elevated terminal from the start avoids this entirely.
+
 ```
 pip install -r requirements.txt
 ```
+
+**If you already hit that crash** (check `Get-Service AMNSAgent` shows
+`Stopped` right after starting, or check the Windows Event Log's Application
+log for a "Python Service" entry), fix it like this, from an elevated terminal:
+```
+python agent_service.py stop
+python agent_service.py remove
+pip install --force-reinstall --no-user -r requirements.txt
+python agent_service.py --startup auto install
+python agent_service.py start
+```
+The `--no-user` flag is what forces everything into the system-wide location
+the service account can actually see.
 
 ## 2. Enroll the machine (once)
 
