@@ -222,12 +222,16 @@ function initLayout(activeKey) {
     const shell = document.createElement("div");
     shell.innerHTML = `
         <nav id="amns-sidebar" class="d-flex flex-column">
-            <div class="brand"><i class="bi bi-activity me-2"></i>Central Monitoring & Diagnostic Platform</div>
+            <div class="brand"><i class="bi bi-activity me-2"></i>Centralized Server & Application Monitoring Platform</div>
             <div class="nav flex-column">${navHtml}</div>
         </nav>
+        <div id="amns-sidebar-backdrop"></div>
         <div id="amns-main">
             <header id="amns-topbar">
-                <div class="fw-semibold text-secondary" id="amns-page-title"></div>
+                <div class="d-flex align-items-center gap-2">
+                    <button id="amns-menu-toggle" aria-label="Open menu"><i class="bi bi-list"></i></button>
+                    <div class="fw-semibold text-secondary" id="amns-page-title"></div>
+                </div>
                 <div class="d-flex align-items-center gap-3">
                     <span class="text-muted small">${escapeHtml(user.name)} &middot; ${user.role}</span>
                     <button class="btn btn-sm btn-outline-secondary" id="amns-logout-btn">
@@ -250,6 +254,21 @@ function initLayout(activeKey) {
     document.getElementById("amns-page-content").innerHTML = pageBody;
     document.getElementById("amns-page-title").textContent = pageTitle;
     extraNodes.forEach((el) => document.body.appendChild(el));
+
+    // On phones/small tablets the sidebar is off-canvas; the hamburger button
+    // and backdrop open/close it. On large screens these elements are simply
+    // hidden by CSS and never wired to anything visible.
+    const sidebar = document.getElementById("amns-sidebar");
+    const backdrop = document.getElementById("amns-sidebar-backdrop");
+    const closeSidebar = () => {
+        sidebar.classList.remove("amns-open");
+        backdrop.classList.remove("show");
+    };
+    document.getElementById("amns-menu-toggle").addEventListener("click", () => {
+        sidebar.classList.add("amns-open");
+        backdrop.classList.add("show");
+    });
+    backdrop.addEventListener("click", closeSidebar);
 
     // Logs the user out on the server (best-effort) and always clears the local session.
     document.getElementById("amns-logout-btn").addEventListener("click", async () => {

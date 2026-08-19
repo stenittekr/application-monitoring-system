@@ -1,4 +1,4 @@
-# Central Monitoring & Diagnostic Platform
+# Centralized Server & Application Monitoring Platform
 
 Automates what was previously a manual process: checking whether internal and
 external company applications are up, alerting the right people the moment

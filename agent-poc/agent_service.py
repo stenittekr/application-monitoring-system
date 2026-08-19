@@ -30,8 +30,8 @@ import agent_config
 
 class AgentService(win32serviceutil.ServiceFramework):
     _svc_name_ = "AMNSAgent"
-    _svc_display_name_ = "Central Monitoring Agent"
-    _svc_description_ = "Sends heartbeat and system metrics to the Central Monitoring & Diagnostic Platform."
+    _svc_display_name_ = "Centralized Monitoring Agent"
+    _svc_description_ = "Sends heartbeat and system metrics to the Centralized Server & Application Monitoring Platform."
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wallboard - Centralized Server & Application Monitoring Platform</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --wb-accent: #39816e;
+            --wb-accent-dark: #2f6c5c;
+            --wb-accent-soft: #e3f3ec;
+            --wb-up: #1f9d6e;
+            --wb-down: #dc3545;
+            --wb-bg: #f2f8f4;
+            --wb-card: #ffffff;
+            --wb-border: #dfeee4;
+            --wb-text-muted: #5b6b63;
+        }
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0; padding: 0; height: 100%;
+            background: var(--wb-bg);
+            font-family: "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+            color: #1f2d27;
+            overflow-x: hidden;
+        }
+        .wb-topbar {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 1.1rem 2rem;
+            background: linear-gradient(120deg, #064e3b, #0d5f4c 55%, #146b57);
+            color: #ecfdf5;
+        }
+        .wb-brand { display: flex; align-items: center; gap: .6rem; font-size: 1.4rem; font-weight: 700; }
+        .wb-brand i { font-size: 1.6rem; }
+        .wb-clockbox { text-align: right; font-variant-numeric: tabular-nums; }
+        .wb-clock { font-size: 1.6rem; font-weight: 700; line-height: 1; }
+        .wb-date { font-size: .85rem; color: rgba(236,253,245,.75); margin-top: .2rem; }
+        .wb-refresh { font-size: .75rem; color: rgba(236,253,245,.65); margin-top: .3rem; }
+        .wb-refresh .dot {
+            display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+            background: #6bdf9e; margin-right: .35rem;
+            animation: wb-pulse 1.6s ease-in-out infinite;
+        }
+        @keyframes wb-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+        .wb-alert-banner {
+            display: none;
+            background: #fdecea; border-bottom: 3px solid var(--wb-down);
+            color: #7a1c1c; padding: .9rem 2rem; font-weight: 600; font-size: 1.05rem;
+            align-items: center; gap: .6rem;
+        }
+        .wb-alert-banner.show { display: flex; }
+        .wb-alert-banner i { font-size: 1.3rem; }
+
+        .wb-main { padding: 1.6rem 2rem 2.5rem; }
+
+        .wb-stats {
+            display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-bottom: 1.8rem;
+        }
+        .wb-stat-card {
+            background: var(--wb-card); border: 1px solid var(--wb-border); border-radius: 1rem;
+            padding: 1.2rem 1.4rem; box-shadow: 0 6px 18px rgba(6,78,59,.06);
+            position: relative; overflow: hidden;
+        }
+        .wb-stat-card::before {
+            content: ""; position: absolute; inset: 0 0 auto 0; height: 4px;
+            background: var(--bar-color, var(--wb-accent));
+        }
+        .wb-stat-label { font-size: .82rem; color: var(--wb-text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+        .wb-stat-value { font-size: 3rem; font-weight: 800; line-height: 1.1; margin-top: .3rem; font-variant-numeric: tabular-nums; }
+
+        .wb-section-title {
+            font-size: 1.05rem; font-weight: 700; margin: 1.6rem 0 .8rem;
+            display: flex; align-items: center; gap: .5rem; color: #14231d;
+        }
+        .wb-section-title i { color: var(--wb-accent); }
+
+        .wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
+
+        .wb-card {
+            background: var(--wb-card); border: 1px solid var(--wb-border); border-radius: 1rem;
+            padding: 1.1rem 1.3rem; box-shadow: 0 6px 18px rgba(6,78,59,.06);
+            display: flex; align-items: center; gap: .9rem;
+            transition: transform .2s ease;
+        }
+        .wb-card.is-down { border-color: rgba(220,53,69,.4); background: #fff8f8; }
+        .wb-dot { width: 16px; height: 16px; border-radius: 50%; flex: none; }
+        .wb-dot.up { background: var(--wb-up); box-shadow: 0 0 0 4px rgba(31,157,110,.15); }
+        .wb-dot.down { background: var(--wb-down); box-shadow: 0 0 0 4px rgba(220,53,69,.18); animation: wb-pulse 1s ease-in-out infinite; }
+        .wb-dot.unknown { background: #9aa5a0; box-shadow: 0 0 0 4px rgba(154,165,160,.15); }
+        .wb-card-body { min-width: 0; flex: 1; }
+        .wb-card-name { font-weight: 700; font-size: 1.02rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .wb-card-meta { font-size: .8rem; color: var(--wb-text-muted); margin-top: .15rem; }
+
+        .wb-empty { color: var(--wb-text-muted); font-size: .95rem; padding: 1rem 0; }
+
+        @media (max-width: 1100px) {
+            .wb-stats { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 640px) {
+            .wb-stats { grid-template-columns: repeat(2, 1fr); }
+            .wb-stat-value { font-size: 2.2rem; }
+        }
+    </style>
+</head>
+<body>
+<header class="wb-topbar">
+    <div class="wb-brand"><i class="bi bi-activity"></i> Centralized Server &amp; Application Monitoring Platform</div>
+    <div class="wb-clockbox">
+        <div class="wb-clock" id="wb-clock">--:--:--</div>
+        <div class="wb-date" id="wb-date">-</div>
+        <div class="wb-refresh"><span class="dot"></span>Live &middot; refreshes every 15s</div>
+    </div>
+</header>
+
+<div class="wb-alert-banner" id="wb-alert-banner">
+    <i class="bi bi-exclamation-octagon-fill"></i>
+    <span id="wb-alert-text"></span>
+</div>
+
+<main class="wb-main">
+    <div class="wb-stats" id="wb-stats"></div>
+
+    <div class="wb-section-title"><i class="bi bi-hdd-network"></i> Applications</div>
+    <div class="wb-grid" id="wb-apps"></div>
+
+    <div class="wb-section-title"><i class="bi bi-server"></i> Servers</div>
+    <div class="wb-grid" id="wb-servers"></div>
+</main>
+
+<script src="../js/api.js"></script>
+<script src="../js/wallboard.js"></script>
+</body>
+</html>

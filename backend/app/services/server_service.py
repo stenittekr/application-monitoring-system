@@ -35,7 +35,13 @@ def _detect_restart(server, uptime_seconds, now):
         return
     estimated_boot_at = now - timedelta(seconds=uptime_seconds)
     if server.last_boot_at is not None:
-        drift = abs((estimated_boot_at - server.last_boot_at).total_seconds())
+        # SQLite round-trips DateTime columns as naive - normalize before
+        # comparing against the timezone-aware estimate, same as
+        # check_missed_heartbeats() does below.
+        last_boot = server.last_boot_at
+        if last_boot.tzinfo is None:
+            last_boot = last_boot.replace(tzinfo=timezone.utc)
+        drift = abs((estimated_boot_at - last_boot).total_seconds())
         if drift > RESTART_DETECTION_TOLERANCE_SECONDS:
             log_activity(
                 None, "SERVER_RESTART_DETECTED", "Server", server.id,

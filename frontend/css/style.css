@@ -60,6 +60,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 1rem;
     background: radial-gradient(circle at top left, rgba(57, 129, 110, 0.35), transparent 55%), linear-gradient(135deg, #022c22, #064e3b);
 }
 
@@ -116,6 +117,7 @@ body {
 #amns-main {
     margin-left: var(--amns-sidebar-width);
     min-height: 100vh;
+    transition: margin-left 0.25s ease;
 }
 
 #amns-topbar {
@@ -125,10 +127,76 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 0.75rem;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
+#amns-menu-toggle {
+    display: none;
+}
+
+#amns-sidebar-backdrop {
+    display: none;
 }
 
 #amns-page-content {
     padding: 1.5rem;
+}
+
+/* ---------- Responsive: phones/small tablets get an off-canvas sidebar ---------- */
+@media (max-width: 991.98px) {
+    #amns-sidebar {
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        z-index: 1040;
+    }
+
+    #amns-sidebar.amns-open {
+        transform: translateX(0);
+        box-shadow: 8px 0 28px rgba(0, 0, 0, 0.35);
+    }
+
+    #amns-main {
+        margin-left: 0;
+    }
+
+    #amns-menu-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.25rem;
+        height: 2.25rem;
+        border-radius: 0.6rem;
+        border: 1px solid var(--amns-border-subtle);
+        background: var(--amns-bg-card);
+        color: var(--amns-accent);
+        font-size: 1.1rem;
+        flex: none;
+    }
+
+    #amns-sidebar-backdrop.show {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(6, 78, 59, 0.35);
+        z-index: 1030;
+    }
+
+    #amns-topbar .text-muted.small {
+        display: none;
+    }
+
+    #amns-page-content {
+        padding: 1rem;
+    }
+}
+
+@media (max-width: 575.98px) {
+    #amns-sidebar {
+        width: min(var(--amns-sidebar-width), 82vw);
+    }
 }
 
 /* ---------- Cards: soft top accent bar + hover lift ---------- */
