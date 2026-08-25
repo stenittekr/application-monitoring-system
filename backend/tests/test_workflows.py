@@ -8,10 +8,19 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from app.services.workflow_service import run_workflow, validate_workflow
+from app.services.workflow_service import _SESSIONS, run_workflow, validate_workflow
+
+
+@pytest.fixture(autouse=True)
+def _clean_session_cache():
+    """Sessions persist between checks by design; they must not persist between tests."""
+    _SESSIONS.clear()
+    yield
+    _SESSIONS.clear()
 
 
 class FakeApp:
+    id = 999          # sessions are cached per application id
     url = "https://portal.example.com"
     timeout = 10
     verify_ssl = True
@@ -99,3 +108,92 @@ def test_a_network_failure_is_reported_without_leaking_credentials(monkeypatch):
         ok, message, _ = run_workflow(FakeApp(), LOGIN_FLOW)
     assert ok is False
     assert "s3cret" not in message
+
+
+# --- Session reuse, driven by the target application's real limits ---------
+#     sessions expire after 600s idle · 10 login failures / 300s per IP ·
+#     every login writes an audit row · 500s return a generic message.
+
+LOGIN_FLOW_WITH_MARKER = [
+    {"name": "Sign in", "method": "POST", "path": "/", "login": True,
+     "form": {"username": "svc_monitor", "password": "${SYN_PASSWORD}"},
+     "expect_contains": "dashboard"},
+    {"name": "Home", "method": "GET", "path": "/home", "expect_contains": "dashboard"},
+]
+
+
+def test_a_second_check_does_not_log_in_again(monkeypatch):
+    """288 logins a day would be 288 audit rows a day, per workflow."""
+    monkeypatch.setenv("SYN_PASSWORD", "s3cret")
+    session = Mock()
+    session.request.return_value = Mock(status_code=200, text="Dashboard")
+    with patch("app.services.workflow_service.requests.Session", return_value=session):
+        run_workflow(FakeApp(), LOGIN_FLOW_WITH_MARKER)
+        first = session.request.call_count
+        run_workflow(FakeApp(), LOGIN_FLOW_WITH_MARKER)
+        second = session.request.call_count - first
+
+    assert first == 2, "the first check logs in and then verifies"
+    assert second == 1, "the second reuses the session and only verifies"
+
+
+def test_a_dropped_session_triggers_one_re_login(monkeypatch):
+    """Being bounced to the login page is not an outage."""
+    monkeypatch.setenv("SYN_PASSWORD", "s3cret")
+    good = Mock(status_code=200, text="Dashboard")
+    session = Mock()
+    session.request.return_value = good
+    with patch("app.services.workflow_service.requests.Session", return_value=session):
+        run_workflow(FakeApp(), LOGIN_FLOW_WITH_MARKER)          # establishes a session
+        session.request.return_value = Mock(status_code=401, text="Please sign in")
+        session.request.side_effect = None
+        # Verify fails as a session loss, then the full flow runs; still failing
+        # here, but the important part is that it retried with a login.
+        before = session.request.call_count
+        ok, message, _ = run_workflow(FakeApp(), LOGIN_FLOW_WITH_MARKER)
+        attempts = session.request.call_count - before
+
+    assert ok is False
+    assert attempts >= 2, "a session loss must be retried with a fresh login"
+
+
+def test_repeated_login_failures_stop_before_the_rate_limit(monkeypatch):
+    """The target allows 10 failures / 300s. An expired service-account password
+    must not burn through that and lock the monitor out of its own recovery."""
+    monkeypatch.setenv("SYN_PASSWORD", "wrong")
+    session = Mock()
+    session.request.return_value = Mock(status_code=401, text="Invalid username or password")
+    with patch("app.services.workflow_service.requests.Session", return_value=session):
+        for _ in range(3):
+            run_workflow(FakeApp(), LOGIN_FLOW_WITH_MARKER)
+        attempts_before = session.request.call_count
+        ok, message, _ = run_workflow(FakeApp(), LOGIN_FLOW_WITH_MARKER)
+
+    assert ok is False
+    assert session.request.call_count == attempts_before, "no request may be sent during cooldown"
+    assert "Login paused" in message
+    assert "password" in message.lower(), "the message must say what to check"
+
+
+def test_a_stale_session_is_not_reused(monkeypatch):
+    """Sessions expire after 600s idle; reusing one past that just fails oddly."""
+    import app.services.workflow_service as ws
+    monkeypatch.setenv("SYN_PASSWORD", "s3cret")
+    session = Mock()
+    session.request.return_value = Mock(status_code=200, text="Dashboard")
+    with patch("app.services.workflow_service.requests.Session", return_value=session):
+        run_workflow(FakeApp(), LOGIN_FLOW_WITH_MARKER)
+        # Age the cached session past the inactivity window.
+        ws._SESSIONS[FakeApp.id]["last_used"] -= (ws.SESSION_MAX_IDLE_SECONDS + 1)
+        before = session.request.call_count
+        run_workflow(FakeApp(), LOGIN_FLOW_WITH_MARKER)
+        attempts = session.request.call_count - before
+
+    assert attempts == 2, "an expired session must log in again rather than be reused"
+
+
+def test_a_workflow_without_a_login_step_is_warned_about():
+    from app.services.workflow_service import workflow_warnings
+    assert workflow_warnings(LOGIN_FLOW_WITH_MARKER) == []
+    warnings = workflow_warnings([{"name": "Ping", "method": "GET", "path": "/health"}])
+    assert warnings and "login step" in warnings[0]

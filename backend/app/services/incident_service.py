@@ -15,6 +15,44 @@ def get_active_incident(application_id=None, server_id=None, kind="REACHABILITY"
     return query.order_by(Incident.started_at.desc()).first()
 
 
+def add_note(incident, user_id, note):
+    """Appends an investigation note. Append-only by design - see the model."""
+    from app.models.incident_note import IncidentNote
+
+    row = IncidentNote(incident_id=incident.id, user_id=user_id, note=note)
+    db.session.add(row)
+    db.session.commit()
+    return row
+
+
+def resolve_manually(incident, user_id, category=None, note=None):
+    """Closes an incident by hand, recording who and why."""
+    resolve_incident(incident, datetime.now(timezone.utc))
+    incident.resolved_by_id = user_id
+    incident.resolution_category = category
+    incident.resolution_note = note
+    db.session.commit()
+    return incident
+
+
+def reopen(incident, user_id, reason):
+    """Reopens a resolved incident, keeping the original detection time.
+
+    started_at and detected_at are deliberately untouched: the outage began
+    when it began, and rewriting that would corrupt every availability figure
+    the incident feeds."""
+    incident.status = "OPEN"
+    incident.resolved_at = None
+    incident.duration_seconds = None
+    incident.resolved_by_id = None
+    incident.reopened_count = (incident.reopened_count or 0) + 1
+    # Allow the recovery email to fire again if it recovers a second time.
+    incident.recovery_notification_sent = False
+    db.session.commit()
+    add_note(incident, user_id, f"Reopened: {reason}")
+    return incident
+
+
 def open_incident(entity, detected_at, reason, http_status_code=None, error_message=None,
                   is_server=False, kind="REACHABILITY"):
     """Creates a new incident for an application or server, only if one isn't already open."""
