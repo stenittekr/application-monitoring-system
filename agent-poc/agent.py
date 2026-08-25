@@ -26,7 +26,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.4.0"
+AGENT_VERSION = "0.5.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -35,6 +35,97 @@ AGENT_VERSION = "0.4.0"
 # (liveness-wise) that sending it late would be misleading, so it's dropped.
 QUEUE_MAX_ENTRIES = 50
 QUEUE_MAX_AGE_SECONDS = 24 * 3600
+
+
+def _os_details():
+    """Operating system name, a readable version, and the architecture.
+
+    platform.release() alone gives "11" or "2022Server", which does not say
+    which build or edition, and on Linux says nothing useful at all. This keeps
+    the coarse family (Windows / Linux / Darwin) for grouping and adds a human
+    string alongside it.
+    """
+    system = platform.system() or "Unknown"
+    version, edition = platform.release(), None
+    try:
+        if system == "Windows":
+            release, build, csd, _ptype = platform.win32_ver()
+            try:
+                edition = platform.win32_edition()          # 3.8+, absent on some builds
+            except AttributeError:
+                edition = None
+            version = f"{release} (build {build})" if build else release
+            if csd and csd.lower() != "servicepack 0":
+                version = f"{version} {csd}"
+        elif system == "Linux":
+            # /etc/os-release is the standard across distributions.
+            fields = {}
+            with open("/etc/os-release", "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        fields[key.strip()] = value.strip().strip('"')
+            edition = fields.get("ID")
+            version = fields.get("PRETTY_NAME") or platform.release()
+        elif system == "Darwin":
+            version = f"macOS {platform.mac_ver()[0]}"
+    except Exception:
+        pass  # a thin answer beats no heartbeat
+    return system, version, edition
+
+
+def _ip_addresses():
+    """Every non-loopback IPv4/IPv6 address, so a machine with several NICs is
+    not reduced to whichever one gethostbyname happened to return."""
+    addresses = []
+    try:
+        families = {socket.AF_INET: "IPv4", socket.AF_INET6: "IPv6"}
+        for interface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family in families and addr.address:
+                    ip = addr.address.split("%")[0]
+                    # Loopback, IPv4 link-local (APIPA - an adapter that failed
+                    # to get a lease) and IPv6 link-local are not addresses
+                    # anything reaches this machine on, and there are usually
+                    # more of them than real ones.
+                    if ip.startswith(("127.", "::1", "169.254.", "fe80:", "FE80:")):
+                        continue
+                    addresses.append({"interface": interface, "family": families[addr.family], "address": ip})
+    except Exception:
+        pass
+    return addresses
+
+
+def _domain():
+    """AD domain or workgroup, where the OS exposes it."""
+    try:
+        if platform.system() == "Windows":
+            return os.environ.get("USERDNSDOMAIN") or os.environ.get("USERDOMAIN")
+        fqdn = socket.getfqdn()
+        return fqdn.split(".", 1)[1] if "." in fqdn else None
+    except Exception:
+        return None
+
+
+def collect_identity():
+    """Server identity, sent with every heartbeat rather than only at enrolment.
+
+    §7.2 asks for hostname, OS/version, IP addresses, domain and hardware
+    summary. Enrolment-only meant a machine that was upgraded, renamed or given
+    a new address kept reporting whatever was true on the day it enrolled - the
+    IP on record here was three DHCP leases out of date.
+    """
+    system, version, edition = _os_details()
+    return {
+        "hostname": socket.gethostname(),
+        "os_name": system,
+        "os_version": version,
+        "os_edition": edition,
+        "os_architecture": platform.machine() or None,
+        "domain": _domain(),
+        "cpu_model": (platform.processor() or None),
+        "ip_addresses": _ip_addresses(),
+    }
 
 
 def _discover_services():
@@ -225,6 +316,7 @@ def collect_metrics():
         "disk_total_gb": safe(lambda: round(
             psutil.disk_usage("C:\\" if platform.system() == "Windows" else "/").total / (1024 ** 3), 1)),
         "agent_version": AGENT_VERSION,
+        **(safe(collect_identity) or {}),
         "discovered_services": safe(_discover_services) or [],
         "discovered_ports": safe(_discover_ports) or [],
         "discovered_processes": safe(_discover_processes) or [],
@@ -239,10 +331,8 @@ def enroll(api, admin_token, interval=60, config_path=agent_config.DEFAULT_CONFI
     config file (locked down, see agent_config.save_config) so no human ever
     has to copy-paste the token into a CLI arg or shell history again."""
     payload = {
-        "hostname": socket.gethostname(),
+        **collect_identity(),
         "ip_address": socket.gethostbyname(socket.gethostname()),
-        "os_name": platform.system(),
-        "os_version": platform.release(),
         "agent_version": AGENT_VERSION,
         "heartbeat_interval_seconds": interval,
     }

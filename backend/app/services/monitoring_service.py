@@ -61,6 +61,8 @@ def _perform_single_attempt(application):
         return _perform_tcp_attempt(application)
     if application.health_check_type == "DATABASE":
         return _perform_database_attempt(application)
+    if application.health_check_type == "WORKFLOW":
+        return _perform_workflow_attempt(application)
     return _perform_http_attempt(application)
 
 
@@ -241,6 +243,31 @@ def expiring_certificates(within_days=None):
                                                  Application.cert_expires_at.isnot(None))
             if a.cert_days_remaining is not None and a.cert_days_remaining <= within_days]
     return sorted(rows, key=lambda a: a.cert_days_remaining)
+
+
+def _perform_workflow_attempt(application):
+    """Runs the application's synthetic business transaction (layer 5).
+
+    A workflow failing is a real outage: the site answered, but nobody can
+    actually use it. That is precisely the case a URL check cannot see."""
+    from app.services.workflow_service import run_workflow
+
+    steps = application.workflow_steps
+    if not steps:
+        return _failure(0.0, "No workflow steps configured for this application.")
+
+    start = time.monotonic()
+    success, message, elapsed_ms = run_workflow(application, steps)
+    if not success:
+        return {
+            "success": False, "status": "DOWN", "http_status_code": None,
+            "response_time": elapsed_ms, "error_message": redact(message),
+        }
+    return {
+        "success": True,
+        "status": "DEGRADED" if elapsed_ms > DEGRADED_RESPONSE_MS else "UP",
+        "http_status_code": None, "response_time": elapsed_ms, "error_message": None,
+    }
 
 
 def _perform_http_attempt(application):

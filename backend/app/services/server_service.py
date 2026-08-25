@@ -130,6 +130,20 @@ def record_heartbeat(server, data):
             setattr(server, field, data[field])
     if data.get("agent_version"):
         server.agent_version = data["agent_version"]
+    # Identity now arrives with every heartbeat, so an OS upgrade, a rename or a
+    # new DHCP lease is reflected instead of frozen at enrolment time. Only
+    # overwrite what was actually sent - an older agent omits these entirely.
+    for field in ("hostname", "os_name", "os_version", "os_edition",
+                  "os_architecture", "domain", "cpu_model"):
+        value = (data.get(field) or "").strip() if isinstance(data.get(field), str) else data.get(field)
+        if value:
+            setattr(server, field, value)
+    if data.get("ip_addresses"):
+        server.ip_addresses_json = json.dumps(data["ip_addresses"])
+        # Keep the single ip_address column meaningful: the first routable IPv4.
+        primary = next((a["address"] for a in data["ip_addresses"] if a.get("family") == "IPv4"), None)
+        if primary:
+            server.ip_address = primary
     if data.get("discovered_services") is not None:
         server.discovered_services_json = json.dumps(data["discovered_services"])
     if data.get("discovered_ports") is not None:

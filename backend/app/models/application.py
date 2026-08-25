@@ -62,6 +62,9 @@ class Application(db.Model):
     cert_expires_at = db.Column(db.DateTime, nullable=True)
     cert_issuer = db.Column(db.String(300), nullable=True)
     cert_checked_at = db.Column(db.DateTime, nullable=True)
+    # Layer 5: a declarative synthetic business transaction. JSON steps, never
+    # code - see workflow_service for the vocabulary and why it is limited.
+    workflow_json = db.Column(db.Text, nullable=True)
     baseline_notes = db.Column(db.Text, nullable=True)
 
     last_checked_at = db.Column(db.DateTime, nullable=True)
@@ -106,6 +109,11 @@ class Application(db.Model):
             match = found.get(name.lower())
             result.append(match if match else {"name": name, "state": "NOT FOUND", "recovery_model": None})
         return result
+
+    @property
+    def workflow_steps(self):
+        """The synthetic workflow steps, or [] if none is configured."""
+        return json.loads(self.workflow_json) if self.workflow_json else []
 
     @property
     def cert_days_remaining(self):
@@ -164,6 +172,7 @@ class Application(db.Model):
             "discovered_databases": self.discovered_databases,
             "cert_expires_at": self.cert_expires_at.isoformat() if self.cert_expires_at else None,
             "cert_issuer": self.cert_issuer,
+            "workflow_steps": self.workflow_steps,
             "cert_days_remaining": self.cert_days_remaining,
             "tracked_databases": self.tracked_databases,
             "baseline_notes": self.baseline_notes,

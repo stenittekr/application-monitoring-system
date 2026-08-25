@@ -42,6 +42,14 @@ class Server(db.Model):
     expected_processes_json = db.Column(db.Text, nullable=True)
     component_breach_streak = db.Column(db.Integer, nullable=False, default=0)
     component_clear_streak = db.Column(db.Integer, nullable=False, default=0)
+    # §7.2 identity. Refreshed on every heartbeat, not only at enrolment - a
+    # machine that is upgraded, renamed or given a new address otherwise keeps
+    # reporting whatever was true on the day it enrolled.
+    os_edition = db.Column(db.String(100), nullable=True)
+    os_architecture = db.Column(db.String(40), nullable=True)
+    domain = db.Column(db.String(150), nullable=True)
+    cpu_model = db.Column(db.String(200), nullable=True)
+    ip_addresses_json = db.Column(db.Text, nullable=True)
     uptime_seconds = db.Column(db.Integer, nullable=True)
 
     last_heartbeat_at = db.Column(db.DateTime, nullable=True)
@@ -91,6 +99,19 @@ class Server(db.Model):
         if self.current_status in ("DOWN", "UNKNOWN"):
             return self.current_status
         return "STALE" if self.is_stale else self.current_status
+
+    @property
+    def ip_addresses(self):
+        """Every routable address this server reports, not just the first one."""
+        return json.loads(self.ip_addresses_json) if self.ip_addresses_json else []
+
+    @property
+    def os_label(self):
+        """One readable line for the OS, e.g. 'Windows 11 (build 10.0.26200) Professional'."""
+        parts = [self.os_name, self.os_version]
+        if self.os_edition and self.os_edition not in (self.os_version or ""):
+            parts.append(self.os_edition)
+        return " ".join(p for p in parts if p) or "Unknown"
 
     @property
     def expected_services(self):
@@ -163,6 +184,12 @@ class Server(db.Model):
             "discovered_ports": json.loads(self.discovered_ports_json) if self.discovered_ports_json else [],
             "discovered_processes": json.loads(self.discovered_processes_json) if self.discovered_processes_json else [],
             "discovered_programs": json.loads(self.discovered_programs_json) if self.discovered_programs_json else [],
+            "os_edition": self.os_edition,
+            "os_architecture": self.os_architecture,
+            "os_label": self.os_label,
+            "domain": self.domain,
+            "cpu_model": self.cpu_model,
+            "ip_addresses": self.ip_addresses,
             "expected_services": self.expected_services,
             "expected_processes": self.expected_processes,
             "component_status": self.component_status,
