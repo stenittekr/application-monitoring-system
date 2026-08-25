@@ -29,6 +29,5 @@ def build_scheduler(flask_app):
         id="monitoring_cycle",
         max_instances=1,
         coalesce=True,
-        next_run_time=None,
     )
     return scheduler
