@@ -1,5 +1,6 @@
 """
-Real agent, v0.2 - enrolls a machine once, then heartbeats its CPU/RAM/disk
+Real agent, v0.3 - enrolls a machine once, then heartbeats its CPU/RAM/disk,
+plus discovered services, listening ports, running processes and installed programs,
 every interval. Can run from a terminal (dev/testing) or as a Windows Service
 (see agent_service.py) for unattended, auto-starting operation.
 
@@ -25,7 +26,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.2.0"
+AGENT_VERSION = "0.4.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -49,6 +50,134 @@ def _discover_services():
         except Exception:
             continue  # one bad service entry (a known psutil quirk) never blocks the rest
     return services
+
+
+# Processes whose *arguments* are the interesting part - "python.exe" alone
+# tells you nothing about which of your scripts is running.
+_INTERPRETERS = ("python", "pythonw", "node", "java", "php", "ruby", "perl", "powershell", "pwsh")
+
+# ponytail: cap the per-heartbeat process list. A busy server has 200-400
+# processes and this ships every 60s; interpreters are always kept, the rest is
+# filled by memory. Raise it if something interesting hides below the cut.
+MAX_PROCESSES = 150
+
+
+def _is_inline_code_flag(flag):
+    """True for flags whose value is code rather than a script path.
+
+    Case-insensitive and prefix-tolerant on purpose: PowerShell writes
+    "-command" in lower case and accepts any unambiguous abbreviation, so
+    matching a literal "-Command" leaked VS Code's inline startup script into
+    the reported inventory. Over-matching here only hides a script name;
+    under-matching ships arbitrary code, which may carry credentials."""
+    name = flag.lstrip("-/").lower()
+    return bool(name) and any(
+        full.startswith(name) for full in ("command", "encodedcommand")
+    )
+
+
+def _script_for(info):
+    """Returns the script an interpreter process is running, or None.
+
+    Only the script path is taken - never the full command line. Flags routinely
+    carry passwords and tokens, and this value gets stored server-side and shown
+    in the dashboard, so the whole argv must not travel with it.
+    """
+    name = (info.get("name") or "").lower()
+    if not any(name.startswith(prefix) for prefix in _INTERPRETERS):
+        return None
+    previous = None
+    for arg in (info.get("cmdline") or [])[1:]:
+        if arg.startswith("-"):
+            previous = arg
+            continue  # skip flags like -m / -u to reach the script or module
+        # -c/-e take inline code as their value. That code is not a script name
+        # and can contain anything, secrets included, so it must not be sent.
+        if previous and _is_inline_code_flag(previous):
+            return f"{previous} (inline code)"
+        return arg[:260]
+    return None
+
+
+# Where Windows records installed software: the 64-bit and 32-bit (WOW) hives
+# plus per-user installs, which is how Programs and Features builds its list.
+_UNINSTALL_KEYS = (
+    ("HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ("HKLM", r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ("HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+)
+
+
+def _discover_programs():
+    """Lists installed programs - the same inventory Programs and Features shows.
+
+    Read straight from the registry with stdlib winreg: no extra dependency, and
+    no WMI (Win32_Product is slow and triggers an MSI self-repair per row)."""
+    if platform.system() != "Windows":
+        return []
+    import winreg
+
+    roots = {"HKLM": winreg.HKEY_LOCAL_MACHINE, "HKCU": winreg.HKEY_CURRENT_USER}
+    seen = {}
+    for root_name, path in _UNINSTALL_KEYS:
+        try:
+            with winreg.OpenKey(roots[root_name], path) as parent:
+                for index in range(winreg.QueryInfoKey(parent)[0]):
+                    try:
+                        with winreg.OpenKey(parent, winreg.EnumKey(parent, index)) as entry:
+                            def value(name):
+                                try:
+                                    return winreg.QueryValueEx(entry, name)[0]
+                                except OSError:
+                                    return None
+
+                            display_name = value("DisplayName")
+                            # Programs and Features hides system components and
+                            # update entries; match it or the list is unreadable.
+                            if not display_name or value("SystemComponent") or value("ParentKeyName"):
+                                continue
+                            seen[(display_name, value("DisplayVersion"))] = {
+                                "name": display_name,
+                                "version": value("DisplayVersion"),
+                                "publisher": value("Publisher"),
+                                "installed_on": value("InstallDate"),
+                            }
+                    except OSError:
+                        continue  # unreadable entry - skip it, never fail the batch
+        except OSError:
+            continue  # hive absent (e.g. no WOW node on 32-bit) - not an error
+    return sorted(seen.values(), key=lambda item: (item["name"] or "").lower())
+
+
+def _discover_processes():
+    """Lists running processes, with the script name for interpreters.
+
+    Same contract as the other discovery helpers: returns [] rather than raising,
+    because a discovery gap must never take the heartbeat down with it."""
+    processes = []
+    try:
+        for proc in psutil.process_iter(["pid", "name", "username", "memory_info", "cmdline"]):
+            try:
+                info = proc.info
+                memory = info.get("memory_info")
+                processes.append({
+                    "pid": info.get("pid"),
+                    "name": info.get("name"),
+                    "user": info.get("username"),
+                    "memory_mb": round((memory.rss if memory else 0) / (1024 * 1024), 1),
+                    "script": _script_for(info),
+                })
+            except Exception:
+                continue  # process died mid-iteration, or access denied - skip it
+    except Exception:
+        return processes
+
+    # Keep every interpreter process regardless of size (that is the whole point
+    # of this list), then spend what is left of the cap on the biggest others.
+    scripted = [p for p in processes if p["script"]]
+    others = sorted((p for p in processes if not p["script"]),
+                    key=lambda p: p["memory_mb"], reverse=True)
+    return scripted + others[: max(0, MAX_PROCESSES - len(scripted))]
 
 
 def _discover_ports():
@@ -89,9 +218,19 @@ def collect_metrics():
         "ram_percent": safe(lambda: psutil.virtual_memory().percent),
         "disk_percent": safe(lambda: psutil.disk_usage("C:\\" if platform.system() == "Windows" else "/").percent),
         "uptime_seconds": safe(lambda: int(time.time() - psutil.boot_time())),
+        # The totals the percentages are percentages OF. "61%" is not actionable
+        # on its own - 61% of 4 GB and 61% of 128 GB are different problems.
+        "cpu_cores": safe(lambda: psutil.cpu_count(logical=True)),
+        "ram_total_mb": safe(lambda: round(psutil.virtual_memory().total / (1024 ** 2))),
+        "disk_total_gb": safe(lambda: round(
+            psutil.disk_usage("C:\\" if platform.system() == "Windows" else "/").total / (1024 ** 3), 1)),
         "agent_version": AGENT_VERSION,
         "discovered_services": safe(_discover_services) or [],
         "discovered_ports": safe(_discover_ports) or [],
+        "discovered_processes": safe(_discover_processes) or [],
+        # ponytail: re-sent every heartbeat. Installed software changes rarely, so
+        # this is redundant traffic - send only on change if payload ever matters.
+        "discovered_programs": safe(_discover_programs) or [],
     }
 
 
@@ -205,7 +344,9 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
         if ok:
             print(f"[heartbeat OK] cpu={metrics['cpu_percent']}% ram={metrics['ram_percent']}% "
                   f"disk={metrics['disk_percent']}% "
-                  f"services={len(metrics['discovered_services'])} ports={len(metrics['discovered_ports'])}")
+                  f"services={len(metrics['discovered_services'])} ports={len(metrics['discovered_ports'])} "
+                  f"processes={len(metrics['discovered_processes'])} "
+                  f"programs={len(metrics['discovered_programs'])}")
         else:
             print(f"[heartbeat FAILED - queued, will retry next cycle] {message}")
             _queue_failed(queue_path, server_id, metrics)
