@@ -41,6 +41,18 @@ def client(app):
     return app.test_client()
 
 
+@pytest.fixture(autouse=True)
+def _single_check_alerting(app):
+    """Most tests are about something other than alert confirmation, and want one
+    failed check to be enough. Production requires 2 consecutive failures; the
+    tests that are actually about that set it explicitly."""
+    from app.models.system_setting import SystemSetting
+
+    _db.session.add(SystemSetting(setting_key="failed_checks_before_incident", setting_value="1"))
+    _db.session.commit()
+    yield
+
+
 @pytest.fixture()
 def db(app):
     return _db

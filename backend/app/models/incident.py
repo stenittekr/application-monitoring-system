@@ -14,6 +14,10 @@ class Incident(db.Model):
     server_id = db.Column(db.Integer, db.ForeignKey("servers.id"), nullable=True)
 
     status = db.Column(db.String(20), nullable=False, default="OPEN")  # OPEN / RESOLVED
+    # REACHABILITY (down/unreachable) or RESOURCE (a threshold breach). A server
+    # can be short of disk AND unreachable; without this the two would share one
+    # incident row and each would silently close the other.
+    kind = db.Column(db.String(20), nullable=False, default="REACHABILITY")
 
     started_at = db.Column(db.DateTime, nullable=False)
     detected_at = db.Column(db.DateTime, nullable=False)
@@ -53,6 +57,7 @@ class Incident(db.Model):
             "application_id": self.application_id,
             "server_id": self.server_id,
             "status": self.status,
+            "kind": self.kind,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "detected_at": self.detected_at.isoformat() if self.detected_at else None,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,

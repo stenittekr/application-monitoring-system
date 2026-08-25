@@ -6,6 +6,7 @@ from app.models.notification import Notification
 from app.models.activity_log import ActivityLog
 from app.models.system_setting import SystemSetting
 from app.models.maintenance_window import MaintenanceWindow
+from app.models.server_change import ServerChange
 from app.models.server import Server
 
 __all__ = [

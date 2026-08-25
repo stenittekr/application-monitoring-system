@@ -1,6 +1,8 @@
 from flask import Blueprint, request
+from flask_jwt_extended import get_jwt_identity
 
 from app.auth.decorators import roles_required
+from app.services.audit_service import log_activity
 from app.extensions import limiter
 from app.services import server_service
 from app.utils.responses import success_response, error_response
@@ -40,6 +42,40 @@ def enroll():
     payload = server.to_dict()
     payload["token"] = token  # only ever shown once, at enrollment
     return success_response(payload, 201)
+
+
+@bp.get("/<int:server_id>/changes")
+@roles_required(*VIEW_ROLES)
+def list_changes(server_id):
+    """Inventory changes detected on this server, newest first (FR-006)."""
+    from app.models.server_change import ServerChange
+
+    rows = (ServerChange.query.filter_by(server_id=server_id)
+            .order_by(ServerChange.detected_at.desc()).limit(200).all())
+    return success_response([r.to_dict() for r in rows])
+
+
+@bp.put("/<int:server_id>/expected")
+@roles_required("ADMIN", "IT_MANAGER")
+def set_expected_components(server_id):
+    """Sets which services and processes this server must be running.
+
+    Restricted to ADMIN/IT_MANAGER: the requirements are explicit that discovery
+    results are candidates and an authorised user decides what is monitored."""
+    server = server_service.get_server(server_id)
+    if not server:
+        return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
+
+    data = request.get_json(silent=True) or {}
+    services = data.get("services")
+    processes = data.get("processes")
+    if not isinstance(services, list) or not isinstance(processes, list):
+        return error_response("services and processes must both be lists.", "VALIDATION_ERROR", 422)
+
+    server = server_service.set_expected_components(server, services, processes)
+    log_activity(int(get_jwt_identity()), "SERVER_COMPONENTS_UPDATED", "Server", server.id,
+                 f"{len(services)} service(s), {len(processes)} process(es)")
+    return success_response(server.to_dict())
 
 
 @bp.post("/heartbeat")

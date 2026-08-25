@@ -124,6 +124,59 @@ def failure_frequency(application_id=None, date_from=None, date_to=None):
     ]
 
 
+def _minutes_between(earlier, later):
+    """Whole minutes between two timestamps, tolerant of naive values."""
+    if not earlier or not later:
+        return None
+    if earlier.tzinfo is None:
+        earlier = earlier.replace(tzinfo=timezone.utc)
+    if later.tzinfo is None:
+        later = later.replace(tzinfo=timezone.utc)
+    seconds = (later - earlier).total_seconds()
+    return seconds / 60 if seconds >= 0 else None
+
+
+def response_metrics(application_id=None, environment=None, date_from=None, date_to=None):
+    """MTTD, MTTA and MTTR over the window (FR-017, §11 step 16).
+
+    Every timestamp these need is already on the incident row, so this is a
+    query rather than new instrumentation:
+
+      MTTD  started_at  -> detected_at      how long until we noticed
+      MTTA  detected_at -> acknowledged_at  how long until a human picked it up
+      MTTR  detected_at -> resolved_at      how long until service returned
+
+    Each is averaged only over the incidents that actually reached that stage,
+    and the count is reported alongside - an MTTA of 4 minutes drawn from one
+    acknowledged incident out of forty is not a number to plan around.
+    """
+    query = Incident.query
+    if application_id:
+        query = query.filter(Incident.application_id == application_id)
+    if date_from:
+        query = query.filter(Incident.detected_at >= date_from)
+    if date_to:
+        query = query.filter(Incident.detected_at <= date_to)
+    if environment:
+        query = query.join(Application, Incident.application_id == Application.id)                      .filter(Application.environment == environment)
+
+    incidents = query.all()
+    buckets = {
+        "mttd_minutes": [_minutes_between(i.started_at, i.detected_at) for i in incidents],
+        "mtta_minutes": [_minutes_between(i.detected_at, i.acknowledged_at) for i in incidents],
+        "mttr_minutes": [_minutes_between(i.detected_at, i.resolved_at) for i in incidents],
+    }
+    result = {"incidents": len(incidents)}
+    for name, values in buckets.items():
+        present = [v for v in values if v is not None]
+        result[name] = round(sum(present) / len(present), 1) if present else None
+        result[name.replace("_minutes", "_sample")] = len(present)
+
+    result["unacknowledged"] = sum(1 for i in incidents if i.acknowledged_at is None)
+    result["unresolved"] = sum(1 for i in incidents if i.resolved_at is None)
+    return result
+
+
 def export_availability_csv(rows):
     """Renders availability report rows as a CSV string."""
     buffer = io.StringIO()

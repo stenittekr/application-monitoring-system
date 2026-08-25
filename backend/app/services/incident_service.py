@@ -5,9 +5,9 @@ from app.extensions import db
 from app.models.incident import Incident
 
 
-def get_active_incident(application_id=None, server_id=None):
-    """Returns the most recent OPEN incident for an application or server, if any."""
-    query = Incident.query.filter_by(status="OPEN")
+def get_active_incident(application_id=None, server_id=None, kind="REACHABILITY"):
+    """Returns the most recent OPEN incident of this kind for an application or server."""
+    query = Incident.query.filter_by(status="OPEN", kind=kind)
     if application_id:
         query = query.filter_by(application_id=application_id)
     if server_id:
@@ -15,12 +15,14 @@ def get_active_incident(application_id=None, server_id=None):
     return query.order_by(Incident.started_at.desc()).first()
 
 
-def open_incident(entity, detected_at, reason, http_status_code=None, error_message=None, is_server=False):
+def open_incident(entity, detected_at, reason, http_status_code=None, error_message=None,
+                  is_server=False, kind="REACHABILITY"):
     """Creates a new incident for an application or server, only if one isn't already open."""
     # The caller only calls this on a DOWN transition, so in practice there should
     # never be an existing OPEN incident here - this guard is a second line of
     # defense against a duplicate incident/email if two monitor cycles ever overlap.
-    existing = get_active_incident(server_id=entity.id) if is_server else get_active_incident(application_id=entity.id)
+    existing = (get_active_incident(server_id=entity.id, kind=kind) if is_server
+                else get_active_incident(application_id=entity.id, kind=kind))
     if existing:
         return existing, False
 
@@ -28,6 +30,7 @@ def open_incident(entity, detected_at, reason, http_status_code=None, error_mess
         application_id=None if is_server else entity.id,
         server_id=entity.id if is_server else None,
         status="OPEN",
+        kind=kind,
         started_at=detected_at,
         detected_at=detected_at,
         reason=reason,

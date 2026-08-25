@@ -49,6 +49,18 @@ def daily_availability():
     return success_response(rows)
 
 
+@bp.get("/response-metrics")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR")
+def response_metrics():
+    """Mean time to detect, acknowledge and restore over the selected window."""
+    return success_response(report_service.response_metrics(
+        application_id=request.args.get("application_id", type=int),
+        environment=request.args.get("environment"),
+        date_from=_parse_date(request.args.get("date_from")),
+        date_to=_parse_date(request.args.get("date_to")),
+    ))
+
+
 @bp.get("/failure-frequency")
 @roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR")
 def failure_frequency():

@@ -2,6 +2,10 @@
 
 Exactly one DOWN email and one RECOVERY email are sent per outage. Reminder
 emails are opt-in via system_settings and rate-limited by interval.
+
+Nothing is emailed on a quiet day (weekends by default). Those notifications
+are held as PENDING and delivered on the next working day by
+retry_failed_notifications, so a weekend outage is delayed, never lost.
 """
 import logging
 from datetime import datetime, timezone
@@ -12,12 +16,33 @@ from app.extensions import db
 from app.models.notification import Notification
 from app.models.system_setting import SystemSetting
 from app.services.email_service import send_email, EmailSendError
+from app.utils.redaction import redact
 
 logger = logging.getLogger(__name__)
 
 MAX_NOTIFICATION_RETRIES = 5
 WEBHOOK_TIMEOUT_SECONDS = 5
 ESCALATION_MINUTES_DEFAULT = "30"
+# Weekday numbers (Mon=0 .. Sun=6) on which no notification is emailed.
+# Override with: INSERT INTO system_settings (setting_key, setting_value)
+#               VALUES ('quiet_days', '');   -- empty = never quiet
+QUIET_DAYS_DEFAULT = "5,6"  # Sat, Sun
+
+
+def _alert_cc(*extra):
+    """Builds the CC list: the application's manager plus the standing
+    distribution list in system_settings. Kept as a setting, not a constant, so
+    the list can change without a code deploy. Deduplicated and order-stable."""
+    raw = _get_setting("alert_cc_recipients", "") or ""
+    addresses = [a.strip() for a in raw.split(",") if a.strip()]
+    addresses = list(extra) + addresses
+    seen, unique = set(), []
+    for address in addresses:
+        key = (address or "").strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(address.strip())
+    return ", ".join(unique) or None
 
 
 def _get_setting(key, default=None):
@@ -26,14 +51,25 @@ def _get_setting(key, default=None):
     return row.setting_value if row else default
 
 
+def _in_quiet_days():
+    """True when today is a configured quiet day - no email or webhook goes out.
+    Health checks still run, incidents still open, and the notification row is
+    still written as PENDING; delivery just waits for the next working day."""
+    # ponytail: server local time is the business time zone. Add a tz
+    # setting only if the worker ever runs somewhere other than the office.
+    days = _get_setting("quiet_days", QUIET_DAYS_DEFAULT) or ""
+    return str(datetime.now().weekday()) in {d.strip() for d in days.split(",") if d.strip()}
+
+
 def _post_webhook(text):
     """Best-effort Slack/Teams alert alongside email - a missing/unreachable
     webhook must never block the email flow or the incident lifecycle."""
     url = _get_setting("slack_webhook_url")
-    if not url:
+    if not url or _in_quiet_days():
         return
     try:
-        requests.post(url, json={"text": text}, timeout=WEBHOOK_TIMEOUT_SECONDS)
+        # Slack/Teams is transmission too - §14 applies here as much as to email.
+        requests.post(url, json={"text": redact(text)}, timeout=WEBHOOK_TIMEOUT_SECONDS)
     except requests.exceptions.RequestException as exc:
         logger.warning("Webhook notification failed: %s", exc)
 
@@ -45,8 +81,9 @@ def _create_and_send(incident, application, notification_type, subject, body):
         application_id=application.id,
         notification_type=notification_type,
         recipient=application.owner_email,
-        cc=application.manager_email,
-        subject=subject,
+        cc=_alert_cc(application.manager_email),
+        subject=redact(subject),
+        body=redact(body),
         status="PENDING",
     )
     db.session.add(notification)
@@ -57,14 +94,21 @@ def _create_and_send(incident, application, notification_type, subject, body):
 
 def _attempt_send(notification, body):
     """Sends the notification email, marking it SENT or FAILED and bumping retry_count on failure."""
+    if _in_quiet_days():
+        # Left PENDING with retry_count untouched - retry_failed_notifications
+        # picks it up on the next working day and sends the stored body.
+        logger.debug("Quiet day - holding notification #%s for the next working day.", notification.id)
+        return
     try:
-        send_email(notification.recipient, notification.subject, body, cc_addr=notification.cc)
+        # Last line of defence before anything leaves the building.
+        send_email(notification.recipient, redact(notification.subject), redact(body),
+                   cc_addr=notification.cc)
         notification.status = "SENT"
         notification.sent_at = datetime.now(timezone.utc)
         notification.error_message = None
     except EmailSendError as exc:
         notification.status = "FAILED"
-        notification.error_message = str(exc)
+        notification.error_message = redact(str(exc))
         notification.retry_count += 1
     db.session.commit()
 
@@ -80,6 +124,12 @@ def send_down_notification(incident, application, http_status_code, error_messag
         f"Environment: {application.environment}\n"
         f"Detected Time: {incident.detected_at.isoformat()}\n"
         f"HTTP Status: {http_status_code if http_status_code is not None else 'N/A'}\n"
+        # The reason was collected and then discarded: the alert announced that
+        # an application was down without ever saying what happened when we
+        # tried it, which is the first thing anyone reading it wants to know.
+        f"Reason: {error_message or incident.reason or 'Health check failed'}\n"
+        f"Attempts: {application.retry_count} per check, failing consecutively "
+        f"before this alert was raised\n"
     )
     notification = _create_and_send(incident, application, "DOWN", subject, body)
     _post_webhook(f"*{application.name}* is DOWN - {error_message or 'health check failed'}")
@@ -135,7 +185,7 @@ def send_server_down_notification(incident, server, error_message):
     )
     notification = Notification(
         incident_id=incident.id, server_id=server.id, notification_type="DOWN",
-        recipient=server.owner_email, subject=subject, status="PENDING",
+        recipient=server.owner_email, subject=subject, body=body, status="PENDING",
     )
     db.session.add(notification)
     db.session.commit()
@@ -167,7 +217,7 @@ def send_server_recovery_notification(incident, server):
     )
     notification = Notification(
         incident_id=incident.id, server_id=server.id, notification_type="RECOVERY",
-        recipient=server.owner_email, subject=subject, status="PENDING",
+        recipient=server.owner_email, subject=subject, body=body, status="PENDING",
     )
     db.session.add(notification)
     db.session.commit()
@@ -183,6 +233,10 @@ def maybe_send_reminder(incident, application):
     """Sends a REMINDER email if reminders are enabled and the interval has elapsed
     since the last notification for this incident."""
     if _get_setting("reminder_notifications_enabled", "false").lower() != "true":
+        return None
+    if _in_quiet_days():
+        # Nothing is lost: the DOWN email already went out, and the next
+        # working day the interval has long elapsed so a reminder fires then.
         return None
 
     interval_minutes = int(_get_setting("reminder_interval_minutes", "60"))
@@ -215,6 +269,10 @@ def check_escalations():
     configured escalation window - fires once per incident (escalated_at),
     so this doesn't repeat every monitoring cycle."""
     from app.models.incident import Incident
+
+    if _in_quiet_days():
+        # escalated_at stays NULL, so the escalation fires the next working day.
+        return
 
     interval_minutes = int(_get_setting("escalation_minutes", ESCALATION_MINUTES_DEFAULT))
     now = datetime.now(timezone.utc)
@@ -259,7 +317,7 @@ def _send_escalation(incident):
     )
     notification = Notification(
         incident_id=incident.id, application_id=incident.application_id, server_id=incident.server_id,
-        notification_type="ESCALATION", recipient=recipient, subject=subject, status="PENDING",
+        notification_type="ESCALATION", recipient=recipient, subject=subject, body=body, status="PENDING",
     )
     db.session.add(notification)
     db.session.commit()
@@ -270,15 +328,20 @@ def _send_escalation(incident):
 
 
 def retry_failed_notifications():
-    """Retries FAILED notifications up to MAX_NOTIFICATION_RETRIES. Called each
-    monitoring cycle so transient SMTP outages self-heal without losing incidents."""
-    failed = Notification.query.filter(
-        Notification.status == "FAILED", Notification.retry_count < MAX_NOTIFICATION_RETRIES
+    """Delivers everything still undelivered: FAILED notifications (up to
+    MAX_NOTIFICATION_RETRIES) and PENDING ones held over a quiet day. Called each
+    monitoring cycle so transient SMTP outages and weekends both self-heal."""
+    if _in_quiet_days():
+        return
+    pending = Notification.query.filter(
+        Notification.status.in_(("PENDING", "FAILED")),
+        Notification.retry_count < MAX_NOTIFICATION_RETRIES,
     ).all()
-    for notification in failed:
+    for notification in pending:
         try:
             send_email(notification.recipient, notification.subject,
-                       "(retry) See original alert details.", cc_addr=notification.cc)
+                       notification.body or "(retry) See original alert details.",
+                       cc_addr=notification.cc)
             notification.status = "SENT"
             notification.sent_at = datetime.now(timezone.utc)
             notification.error_message = None
@@ -288,5 +351,5 @@ def retry_failed_notifications():
                 notification.incident.recovery_notification_sent = True
         except EmailSendError as exc:
             notification.retry_count += 1
-            notification.error_message = str(exc)
+            notification.error_message = redact(str(exc))
         db.session.commit()

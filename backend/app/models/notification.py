@@ -19,6 +19,9 @@ class Notification(db.Model):
     cc = db.Column(db.String(255), nullable=True)
 
     subject = db.Column(db.String(500), nullable=False)
+    # Kept so a notification held over a weekend (or retried after an SMTP
+    # outage) is delivered with its real content, not a placeholder.
+    body = db.Column(db.Text, nullable=True)
 
     status = db.Column(db.String(20), nullable=False, default="PENDING")  # PENDING/SENT/FAILED
 
@@ -39,6 +42,7 @@ class Notification(db.Model):
             "recipient": self.recipient,
             "cc": self.cc,
             "subject": self.subject,
+            "body": self.body,
             "status": self.status,
             "sent_at": self.sent_at.isoformat() if self.sent_at else None,
             "error_message": self.error_message,

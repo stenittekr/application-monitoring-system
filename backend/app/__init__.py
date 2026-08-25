@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+
 from flask import Flask
 from flask_jwt_extended import JWTManager
 
@@ -9,6 +10,39 @@ from app.extensions import db, jwt, bcrypt, cors, limiter
 from app.utils.responses import error_response
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+
+
+def _tune_sqlite(app):
+    """Makes SQLite survive several processes talking to it at once.
+
+    The platform, the monitoring worker and every agent heartbeat write to the
+    same file. Stock SQLite serialises writers behind a 5-second timeout and
+    blocks readers while a write is in flight, which surfaces as
+    "database is locked" on ordinary page loads.
+
+    WAL lets readers carry on during a write, and a longer busy timeout lets a
+    blocked writer wait its turn instead of failing. This is a mitigation, not a
+    cure - the real fix is SQL Server, which is what production is meant to use.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    if not str(app.config.get("SQLALCHEMY_DATABASE_URI", "")).startswith("sqlite"):
+        return
+
+    @event.listens_for(Engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):
+        """Applied per connection - SQLite settings do not persist across them."""
+        try:
+            cursor = dbapi_connection.cursor()
+            # WAL is a property of the database file and sticks; set anyway so a
+            # fresh file gets it too. Harmless to repeat.
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=15000")   # wait 15s, don't fail at once
+            cursor.execute("PRAGMA synchronous=NORMAL")   # safe under WAL, far fewer fsyncs
+            cursor.close()
+        except Exception:  # pragma: no cover - never let tuning break startup
+            pass
 
 
 def create_app(config_object=Config):
@@ -22,6 +56,13 @@ def create_app(config_object=Config):
     )
 
     db.init_app(app)
+    _tune_sqlite(app)
+
+    # Secrets must not reach the log files either (requirements §14/§18).
+    from app.utils.redaction import RedactingFilter
+    root_logger = logging.getLogger()
+    if not any(isinstance(f, RedactingFilter) for f in root_logger.filters):
+        root_logger.addFilter(RedactingFilter())
     jwt.init_app(app)
     bcrypt.init_app(app)
     cors.init_app(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})

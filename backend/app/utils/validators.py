@@ -3,7 +3,10 @@ import re
 from urllib.parse import urlparse
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-HEALTH_CHECK_TYPES = ("HTTP", "HTTPS", "TCP")
+HEALTH_CHECK_TYPES = ("HTTP", "HTTPS", "TCP", "DATABASE")
+# Dialects we ship a driver for: pyodbc (MSSQL) and PyMySQL (MySQL/MariaDB).
+DATABASE_BACKENDS = ("mssql", "mysql")
+MATURITY_STATUSES = ("DISCOVERED", "INFORMATION_REQUIRED", "PROFILE_DRAFT", "MONITORED", "MAINTENANCE", "RETIRED")
 
 
 def is_valid_email(value):
@@ -29,6 +32,32 @@ def is_valid_url(value):
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
+def validate_database_dsn(value):
+    """Validates a DATABASE health-check DSN. Returns an error string, or None.
+
+    The password must be an ${ENV_VAR} reference rather than a literal, so
+    credentials live in the environment and never in the applications table
+    (where they would also leak into the UI, the API and exported reports)."""
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+
+    if not str(value or "").strip():
+        return "A connection string is required for DATABASE health checks."
+    try:
+        url = make_url(value.strip())
+    except (ArgumentError, ValueError):
+        return "Connection string must be a valid SQLAlchemy URL, e.g. mysql+pymysql://user:${DB_PASSWORD}@host:3306/dbname"
+    if url.get_backend_name() not in DATABASE_BACKENDS:
+        return f"Database backend must be one of {DATABASE_BACKENDS}."
+    if not url.host:
+        return "Connection string must include a host."
+    raw = value.strip()
+    if url.password and not re.search(r"\$\{\w+\}|%\w+%", raw):
+        return ("Put the password in an environment variable and reference it as "
+                "${VAR_NAME} in the connection string - literal passwords are not stored.")
+    return None
+
+
 def validate_application_payload(data, partial=False):
     """Returns a list of human-readable error strings; empty list means valid."""
     errors = []
@@ -50,6 +79,10 @@ def validate_application_payload(data, partial=False):
                 errors.append("URL is required for HTTP/HTTPS health checks.")
             elif not is_valid_url(data.get("url")):
                 errors.append("URL must be a valid HTTP or HTTPS URL.")
+        elif check_type == "DATABASE":
+            error = validate_database_dsn(data.get("url"))
+            if error:
+                errors.append(error)
         elif check_type == "TCP":
             if not str(data.get("server") or "").strip():
                 errors.append("Server/hostname is required for TCP health checks.")
@@ -95,5 +128,13 @@ def validate_application_payload(data, partial=False):
                 errors.append("Retry count must be >= 0.")
         except (TypeError, ValueError):
             errors.append("Retry count must be a number.")
+
+    if data.get("maturity_status") and str(data["maturity_status"]).upper() not in MATURITY_STATUSES:
+        errors.append(f"Maturity status must be one of {MATURITY_STATUSES}.")
+
+    if data.get("depends_on") is not None:
+        deps = data["depends_on"]
+        if not isinstance(deps, list) or not all(isinstance(d, int) for d in deps):
+            errors.append("Dependencies must be a list of application IDs.")
 
     return errors

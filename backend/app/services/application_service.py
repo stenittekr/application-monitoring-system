@@ -9,7 +9,7 @@ APPLICATION_FIELDS = (
     "owner_name", "owner_email", "manager_name", "manager_email",
     "monitoring_enabled", "monitoring_interval", "timeout",
     "retry_count", "retry_delay", "expected_status_code", "verify_ssl",
-    "department", "icon",
+    "department", "icon", "baseline_notes",
 )
 
 
@@ -61,6 +61,9 @@ def create_application(data, defaults):
         department=(data.get("department") or "").strip() or None,
         icon=(data.get("icon") or "").strip() or None,
         current_status="UNKNOWN",
+        maturity_status=(data.get("maturity_status") or "MONITORED").upper(),
+        baseline_notes=(data.get("baseline_notes") or "").strip() or None,
+        depends_on=data.get("depends_on") or [],
     )
     db.session.add(app_row)
     db.session.commit()
@@ -80,6 +83,10 @@ def update_application(app_row, data):
             if field == "port":
                 value = int(value)
             setattr(app_row, field, value)
+    if "maturity_status" in data and data["maturity_status"]:
+        app_row.maturity_status = str(data["maturity_status"]).upper()
+    if "depends_on" in data:
+        app_row.depends_on = [i for i in (data["depends_on"] or []) if i != app_row.id]
     app_row.updated_at = datetime.now(timezone.utc)
     db.session.commit()
     return app_row
