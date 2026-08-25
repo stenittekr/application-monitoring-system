@@ -193,9 +193,11 @@ function confirmAction(message) {
 //   AUDITOR     - Auditor/Management, read-only across dashboards/reports/audit trail
 const NAV_ITEMS = [
     { key: "dashboard", label: "Dashboard", href: "dashboard.html", icon: "bi-speedometer2", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
+    { key: "applications", label: "Applications", href: "applications.html", icon: "bi-window-stack", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
     { key: "incidents", label: "Incidents", href: "incidents.html", icon: "bi-exclamation-triangle", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
     { key: "health-checks", label: "Health Checks", href: "health-checks.html", icon: "bi-heart-pulse", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
     { key: "servers", label: "Servers", href: "servers.html", icon: "bi-hdd-network", roles: ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"] },
+    { key: "databases", label: "Databases", href: "databases.html", icon: "bi-database", roles: ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"] },
     { key: "reports", label: "Reports", href: "reports.html", icon: "bi-bar-chart", roles: ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"] },
     { key: "activity-logs", label: "Activity Logs", href: "activity-logs.html", icon: "bi-journal-text", roles: ["ADMIN", "IT_MANAGER", "AUDITOR"] },
     { key: "users", label: "Users", href: "users.html", icon: "bi-people", roles: ["ADMIN", "IT_MANAGER"] },

@@ -3,7 +3,7 @@
     renderWelcomeBanner();
     load();
     document.getElementById("refresh-btn").addEventListener("click", load);
-    setInterval(load, 30000); // ponytail: fixed 30s poll, add a setting if that ever needs tuning
+    setInterval(load, 5000); // ponytail: fixed 5s poll, add a setting if that ever needs tuning
 
     const user = getCurrentUser();
     if (user.role === "ADMIN" || user.role === "IT_MANAGER") {
@@ -36,7 +36,10 @@
     // Fetches applications and open incidents, then refreshes the stat cards and table.
     async function load() {
         try {
-            const [apps, incidents] = await Promise.all([api.get("/applications"), api.get("/incidents?status=OPEN")]);
+            const [allApps, incidents] = await Promise.all([api.get("/applications"), api.get("/incidents?status=OPEN")]);
+            // Databases live on their own page - their connection strings are not
+            // URLs and cannot be opened, so they do not belong in this table.
+            const apps = allApps.filter((a) => a.health_check_type !== "DATABASE");
             renderStats(apps, incidents);
             renderAppTiles(apps);
             await renderTable(apps);
@@ -58,24 +61,42 @@
         const counts = { UP: 0, DOWN: 0, DEGRADED: 0, UNKNOWN: 0, DISABLED: 0 };
         apps.forEach((a) => { counts[a.current_status] = (counts[a.current_status] || 0) + 1; });
 
+        // Every figure links to the list it counts. A stat that raises a question
+        // should be one click from its answer - "2 active incidents" is not much
+        // use without which two, and why.
         const cards = [
-            { label: "Total Applications", value: apps.length, icon: "bi-hdd-network", color: "primary" },
-            { label: "Up", value: counts.UP, icon: "bi-check-circle", color: "success" },
-            { label: "Down", value: counts.DOWN, icon: "bi-x-circle", color: "danger" },
-            { label: "Active Incidents", value: activeIncidents.length, icon: "bi-fire", color: "danger" },
+            { label: "Total Applications", value: apps.length, icon: "bi-hdd-network", color: "primary",
+              href: "applications.html" },
+            { label: "Up", value: counts.UP, icon: "bi-check-circle", color: "success",
+              href: "applications.html" },
+            { label: "Down", value: counts.DOWN, icon: "bi-x-circle", color: "danger",
+              href: "applications.html" },
+            { label: "Active Incidents", value: activeIncidents.length, icon: "bi-fire", color: "danger",
+              href: "incidents.html?status=OPEN",
+              // The dashboard already has the reasons; showing them here saves a
+              // trip for the common case of "what is on fire right now?".
+              detail: activeIncidents.slice(0, 3).map((i) => i.reason || i.error_message || "Reason not recorded") },
         ];
 
         document.getElementById("stat-cards").innerHTML = cards.map((c) => `
-            <div class="col-6 col-md-4 col-xl-2">
-                <div class="card border-0 shadow-sm stat-card h-100">
+            <div class="col-6 col-md-4 col-xl-3">
+                <a class="card border-0 shadow-sm stat-card h-100 text-decoration-none text-reset"
+                   href="${c.href}" title="${escapeHtml(c.label)} - open the full list">
                     <div class="card-body d-flex justify-content-between align-items-start">
-                        <div>
+                        <!-- min-width:0 is what makes text-truncate work at all here:
+                             a flex child defaults to min-width:auto and refuses to
+                             shrink below its content, so long reasons spill out. -->
+                        <div class="me-2 flex-grow-1" style="min-width:0">
                             <div class="text-muted small mb-2">${c.label}</div>
                             <div class="stat-value text-${c.color}">${c.value}</div>
+                            ${(c.detail || []).length ? `<div class="small text-muted mt-2 lh-sm">
+                                ${c.detail.map((d) => `<div class="stat-detail" title="${escapeHtml(d)}">${escapeHtml(d)}</div>`).join("")}
+                                ${c.value > c.detail.length ? `<div class="fst-italic">+${c.value - c.detail.length} more</div>` : ""}
+                            </div>` : ""}
                         </div>
-                        <span class="stat-icon-badge text-${c.color}"><i class="bi ${c.icon}"></i></span>
+                        <span class="stat-icon-badge text-${c.color} flex-shrink-0"><i class="bi ${c.icon}"></i></span>
                     </div>
-                </div>
+                </a>
             </div>`).join("");
     }
 

@@ -48,7 +48,19 @@
         });
     }
 
+    // Preselect the status filter when arrived at from a dashboard stat card, so
+    // "2 active incidents" lands on those two rather than on the whole history.
+    const requestedStatus = new URLSearchParams(window.location.search).get("status");
+    if (requestedStatus) {
+        const control = document.getElementById("filter-status");
+        if ([...control.options].some((o) => o.value === requestedStatus)) {
+            control.value = requestedStatus;
+        }
+    }
+
     // Fetches incidents matching the current filters and renders the table.
+    setInterval(load, 10000); // ponytail: matches the other list pages
+
     async function load() {
         const params = new URLSearchParams();
         const appId = document.getElementById("filter-application").value;
@@ -121,7 +133,7 @@
                 <td>${formatDateTime(incident.detected_at)}</td>
                 <td>${formatDateTime(incident.resolved_at)}</td>
                 <td>${durationLabel}</td>
-                <td class="text-truncate" style="max-width:200px" title="${escapeHtml(incident.reason || "")}">${escapeHtml(incident.reason || "-")}</td>
+                <td style="max-width:280px; white-space:normal;">${escapeHtml(incident.reason || "-")}</td>
                 <td>${notificationIcon}</td>
                 <td>${acknowledgedLabel}</td>
                 <td>${assignedLabel}</td>

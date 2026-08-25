@@ -4,6 +4,7 @@
     document.getElementById("apply-filters-btn").addEventListener("click", load);
 
     init();
+    setInterval(load, 5000); // ponytail: fixed 5s poll, add a setting if that ever needs tuning
 
     // Loads the application dropdown, then loads the initial (unfiltered) health-check list.
     async function init() {

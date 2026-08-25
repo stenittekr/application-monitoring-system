@@ -40,11 +40,14 @@
                 <ul class="nav nav-tabs" role="tablist">
                     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#discovery-services">Services</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-ports">Ports</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-processes">Processes</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-programs">Installed Programs</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-changes">Changes</button></li>
                 </ul>
                 <div class="tab-content pt-3">
                     <div class="tab-pane fade show active" id="discovery-services">
                         <table class="table table-sm">
-                            <thead><tr><th>Name</th><th>Display Name</th><th>Status</th></tr></thead>
+                            <thead><tr><th style="width:5rem">Monitor</th><th>Name</th><th>Display Name</th><th>Status</th></tr></thead>
                             <tbody id="discovery-services-body"></tbody>
                         </table>
                     </div>
@@ -54,7 +57,38 @@
                             <tbody id="discovery-ports-body"></tbody>
                         </table>
                     </div>
+                    <div class="tab-pane fade" id="discovery-processes">
+                        <div class="form-check form-switch small mb-2">
+                            <input class="form-check-input" type="checkbox" id="discovery-scripts-only" checked>
+                            <label class="form-check-label" for="discovery-scripts-only">
+                                Only scripts (Python, Node, Java, PowerShell)
+                            </label>
+                        </div>
+                        <table class="table table-sm">
+                            <thead><tr><th style="width:5rem">Monitor</th><th>Process</th><th>Script / Module</th><th>PID</th><th>User</th><th class="text-end">Memory</th></tr></thead>
+                            <tbody id="discovery-processes-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-changes">
+                        <table class="table table-sm">
+                            <thead><tr><th>When</th><th>Category</th><th>Change</th><th>Item</th><th>Detail</th></tr></thead>
+                            <tbody id="discovery-changes-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-programs">
+                        <input class="form-control form-control-sm mb-2" id="discovery-programs-filter" placeholder="Filter by name or publisher...">
+                        <table class="table table-sm">
+                            <thead><tr><th>Program</th><th>Version</th><th>Publisher</th></tr></thead>
+                            <tbody id="discovery-programs-body"></tbody>
+                        </table>
+                    </div>
                 </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <span class="small text-muted" id="discovery-expected-summary"></span>
+                <button class="btn btn-sm btn-primary" id="discovery-save-expected">
+                    Save monitored components
+                </button>
             </div>
         </div>
     </div>

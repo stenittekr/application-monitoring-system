@@ -1,8 +1,45 @@
 /** Powers both applications.html (list + CRUD) and application-details.html (detail view). */
 (function () {
-    // Returns the display string for what an app's health check hits (host:port or URL).
+    // Reduces a DATABASE connection string to just host/database for display -
+    // the full DSN is long, and its user/${ENV_VAR} part is noise on a list screen.
+    function dsnLabel(dsn) {
+        const m = /@([^/?]+)[/]?([^?]*)/.exec(dsn || "");
+        return m ? (m[2] ? `${m[1]}/${m[2]}` : m[1]) : (dsn || "-");
+    }
+
+    // Certificates expire quietly and take a site down completely when they do,
+    // so the warning belongs where the application is listed, not on a sub-page.
+    function certCell(app) {
+        const days = app.cert_days_remaining;
+        if (days === null || days === undefined) return `<span class="text-muted small">-</span>`;
+        if (days < 0) return `<span class="badge bg-danger">Expired ${-days}d ago</span>`;
+        if (days <= 14) return `<span class="badge bg-danger">${days}d left</span>`;
+        if (days <= 30) return `<span class="badge bg-warning text-dark">${days}d left</span>`;
+        return `<span class="text-muted small">${days}d</span>`;
+    }
+
+    // Returns the display string for what an app's health check hits (host:port, DSN or URL).
     function targetLabel(app) {
-        return app.health_check_type === "TCP" ? `${app.server}:${app.port}` : (app.url || "-");
+        if (app.health_check_type === "TCP") return `${app.server}:${app.port}`;
+        if (app.health_check_type === "DATABASE") return dsnLabel(app.url);
+        return app.url || "-";
+    }
+
+    const MATURITY_LABELS = {
+        DISCOVERED: "Discovered", INFORMATION_REQUIRED: "Information Required", PROFILE_DRAFT: "Profile Draft",
+        MONITORED: "Monitored", MAINTENANCE: "Maintenance", RETIRED: "Retired",
+    };
+    const MATURITY_BADGE_CLASS = {
+        DISCOVERED: "bg-secondary-subtle text-secondary-emphasis border",
+        INFORMATION_REQUIRED: "bg-warning-subtle text-warning-emphasis border",
+        PROFILE_DRAFT: "bg-info-subtle text-info-emphasis border",
+        MONITORED: "bg-success-subtle text-success-emphasis border",
+        MAINTENANCE: "bg-info-subtle text-info-emphasis border",
+        RETIRED: "bg-light text-muted border",
+    };
+    function maturityBadge(status) {
+        const cls = MATURITY_BADGE_CLASS[status] || MATURITY_BADGE_CLASS.DISCOVERED;
+        return `<span class="badge ${cls}">${MATURITY_LABELS[status] || status}</span>`;
     }
 
 
@@ -31,21 +68,31 @@
         form.addEventListener("submit", onSubmit);
         document.getElementById("app-health-check-type").addEventListener("change", toggleCheckTypeFields);
         load();
+        setInterval(load, 5000); // ponytail: fixed 5s poll, add a setting if that ever needs tuning
 
-        // Shows the URL field for HTTP(S) checks or the server/port fields for TCP checks.
+        // Shows the URL/DSN field for HTTP(S)/DATABASE checks, or server+port for TCP.
         function toggleCheckTypeFields() {
-            const isTcp = document.getElementById("app-health-check-type").value === "TCP";
+            const type = document.getElementById("app-health-check-type").value;
+            const isTcp = type === "TCP";
+            const isDb = type === "DATABASE";
+            document.getElementById("app-url-label").textContent = isDb ? "Connection String" : "URL";
+            const urlInput = document.getElementById("app-url");
+            urlInput.placeholder = isDb
+                ? "mysql+pymysql://user:${DB_PASSWORD}@host:3306/dbname"
+                : "https://example.com";
             document.getElementById("app-url-group").classList.toggle("d-none", isTcp);
             document.getElementById("app-server-group").classList.toggle("d-none", !isTcp);
             document.getElementById("app-port-group").classList.toggle("d-none", !isTcp);
         }
 
+        let allApps = [];
+
         // Fetches the applications list and re-renders the table.
         async function load() {
             try {
-                const apps = await api.get("/applications");
-                renderTable(apps, isAdmin);
-                maybeOpenFromEditParam(apps);
+                allApps = (await api.get("/applications")).filter((a) => a.health_check_type !== "DATABASE");
+                renderTable(allApps, isAdmin);
+                maybeOpenFromEditParam(allApps);
             } catch (err) {
                 showError(err);
             }
@@ -64,19 +111,19 @@
         function renderTable(apps, isAdmin) {
             const tbody = document.getElementById("applications-table-body");
             if (!apps.length) {
-                tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4">No applications yet.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">No applications yet.</td></tr>`;
                 return;
             }
             tbody.innerHTML = apps.map((app) => `
                 <tr>
                     <td>${escapeHtml(app.name)}</td>
                     <td>${escapeHtml(app.environment)}</td>
-                    <td><span class="badge bg-light text-dark border me-1">${app.health_check_type}</span>${escapeHtml(targetLabel(app))}</td>
+                    <td><span class="badge bg-light text-dark border me-1">${app.health_check_type}</span>${escapeHtml(targetLabel(app))}
+                        <div class="small mt-1">TLS: ${certCell(app)}</div></td>
                     <td>${statusBadge(app.current_status)}${app.in_maintenance ? ' <span class="badge bg-info-subtle text-info-emphasis border">Maintenance</span>' : ""}</td>
+                    <td>${maturityBadge(app.maturity_status)}</td>
                     <td>${app.monitoring_enabled ? '<span class="text-success">Enabled</span>' : '<span class="text-muted">Disabled</span>'}</td>
                     <td>${formatDateTime(app.last_checked_at)}</td>
-                    <td>${escapeHtml(app.owner_name)}</td>
-                    <td>${escapeHtml(app.manager_name)}</td>
                     <td class="btn-group btn-group-sm">
                         <a class="btn btn-outline-primary" title="View / History" href="application-details.html?id=${app.id}"><i class="bi bi-eye"></i></a>
                         ${isAdmin ? `
@@ -104,10 +151,11 @@
             document.getElementById("app-server").value = app ? (app.server || "") : "";
             document.getElementById("app-port").value = app ? (app.port || "") : "";
             toggleCheckTypeFields();
-            document.getElementById("app-owner-name").value = app ? app.owner_name : "";
-            document.getElementById("app-owner-email").value = app ? app.owner_email : "";
-            document.getElementById("app-manager-name").value = app ? app.manager_name : "";
-            document.getElementById("app-manager-email").value = app ? app.manager_email : "";
+            const currentUser = getCurrentUser();
+            document.getElementById("app-owner-name").value = app ? app.owner_name : currentUser.name;
+            document.getElementById("app-owner-email").value = app ? app.owner_email : currentUser.email;
+            document.getElementById("app-manager-name").value = app ? app.manager_name : currentUser.name;
+            document.getElementById("app-manager-email").value = app ? app.manager_email : currentUser.email;
             document.getElementById("app-interval").value = app ? app.monitoring_interval : 60;
             document.getElementById("app-timeout").value = app ? app.timeout : 10;
             document.getElementById("app-retry-count").value = app ? app.retry_count : 3;
@@ -115,7 +163,20 @@
             document.getElementById("app-expected-status").value = app ? app.expected_status_code : 200;
             document.getElementById("app-monitoring-enabled").checked = app ? app.monitoring_enabled : true;
             document.getElementById("app-verify-ssl").checked = app ? app.verify_ssl !== false : true;
+            document.getElementById("app-maturity-status").value = app ? app.maturity_status : "MONITORED";
+            document.getElementById("app-baseline-notes").value = app ? (app.baseline_notes || "") : "";
+            populateDependsOn(app);
             modal.show();
+        }
+
+        // Fills the "Depends On" multi-select with every other application, checking off the current app's dependencies.
+        function populateDependsOn(app) {
+            const select = document.getElementById("app-depends-on");
+            const dependsOn = app ? (app.depends_on || []) : [];
+            select.innerHTML = allApps
+                .filter((a) => !app || a.id !== app.id)
+                .map((a) => `<option value="${a.id}" ${dependsOn.includes(a.id) ? "selected" : ""}>${escapeHtml(a.name)}</option>`)
+                .join("");
         }
 
         // Reads the form fields and creates or updates the application via the API.
@@ -142,6 +203,9 @@
                 expected_status_code: Number(document.getElementById("app-expected-status").value),
                 monitoring_enabled: document.getElementById("app-monitoring-enabled").checked,
                 verify_ssl: document.getElementById("app-verify-ssl").checked,
+                maturity_status: document.getElementById("app-maturity-status").value,
+                baseline_notes: document.getElementById("app-baseline-notes").value.trim(),
+                depends_on: Array.from(document.getElementById("app-depends-on").selectedOptions).map((o) => Number(o.value)),
             };
             try {
                 if (id) {
@@ -209,11 +273,13 @@
         // Fetches the app, its health checks, and its incidents, then re-renders every section.
         async function load() {
             try {
-                const [app, healthChecks, incidents] = await Promise.all([
+                const [app, healthChecks, incidents, allApps] = await Promise.all([
                     api.get(`/applications/${id}`),
                     api.get(`/applications/${id}/health-checks?limit=100`),
                     api.get(`/applications/${id}/incidents`),
+                    api.get("/applications"),
                 ]);
+                window.__allAppsById = Object.fromEntries(allApps.map((a) => [a.id, a.name]));
                 renderHeader(app);
                 renderStats(healthChecks, incidents);
                 renderInfo(app);
@@ -258,16 +324,26 @@
 
         // Renders the app's general info and configuration detail tables.
         function renderInfo(app) {
-            const targetRow = app.health_check_type === "TCP"
-                ? `<tr><th>Server / Port</th><td>${escapeHtml(app.server)}:${app.port}</td></tr>`
-                : `<tr><th>URL</th><td><a href="${app.url}" target="_blank" rel="noopener">${escapeHtml(app.url)}</a></td></tr>`;
+            let targetRow;
+            if (app.health_check_type === "TCP") {
+                targetRow = `<tr><th>Server / Port</th><td>${escapeHtml(app.server)}:${app.port}</td></tr>`;
+            } else if (app.health_check_type === "DATABASE") {
+                // Plain text, not a link - a DSN is not navigable.
+                targetRow = `<tr><th>Database</th><td><code>${escapeHtml(app.url || "-")}</code></td></tr>`;
+            } else {
+                targetRow = `<tr><th>URL</th><td><a href="${app.url}" target="_blank" rel="noopener">${escapeHtml(app.url)}</a></td></tr>`;
+            }
+            const dependsOnNames = (app.depends_on || [])
+                .map((id) => window.__allAppsById && window.__allAppsById[id])
+                .filter(Boolean);
             document.getElementById("details-info-table").innerHTML = `
                 <tr><th>Health Check Type</th><td>${app.health_check_type}</td></tr>
                 ${targetRow}
                 <tr><th>Environment</th><td>${escapeHtml(app.environment)}</td></tr>
                 <tr><th>Description</th><td>${escapeHtml(app.description || "-")}</td></tr>
-                <tr><th>Owner</th><td>${escapeHtml(app.owner_name)} &lt;${escapeHtml(app.owner_email)}&gt;</td></tr>
-                <tr><th>Manager</th><td>${escapeHtml(app.manager_name)} &lt;${escapeHtml(app.manager_email)}&gt;</td></tr>
+                <tr><th>Maturity Status</th><td>${maturityBadge(app.maturity_status)}</td></tr>
+                <tr><th>Depends On</th><td>${dependsOnNames.length ? dependsOnNames.map(escapeHtml).join(", ") : "-"}</td></tr>
+                <tr><th>Baseline Notes</th><td>${escapeHtml(app.baseline_notes || "-")}</td></tr>
                 <tr><th>Last Checked</th><td>${formatDateTime(app.last_checked_at)}</td></tr>
                 <tr><th>Last Successful Check</th><td>${formatDateTime(app.last_successful_check_at)}</td></tr>
                 <tr><th>Last Failed Check</th><td>${formatDateTime(app.last_failed_check_at)}</td></tr>`;

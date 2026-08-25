@@ -266,6 +266,30 @@ body {
 .status-UNKNOWN, .status-DISABLED { background: rgba(108, 117, 125, 0.12); color: var(--amns-unknown); }
 .status-UNKNOWN::before, .status-DISABLED::before { background: var(--amns-unknown); }
 
+/* STALE = we have no fresh data. Deliberately not green and not grey: the point
+   is that it must never be mistaken for healthy, nor dismissed as "no data". */
+.status-STALE { background: rgba(150, 100, 0, 0.14); color: #8a5a00; }
+.status-STALE::before { background: #8a5a00; }
+
+/* Stat cards are links now, so they need to look and behave like one. */
+a.stat-card { transition: transform .12s ease, box-shadow .12s ease; }
+a.stat-card:hover { transform: translateY(-2px); box-shadow: 0 .5rem 1rem rgba(0,0,0,.1) !important; }
+a.stat-card:focus-visible { outline: 2px solid var(--amns-accent); outline-offset: 2px; }
+
+/* The reason lines under a stat: clipped to the card, never spilling out. */
+.stat-detail {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    a.stat-card { transition: none; }
+    a.stat-card:hover { transform: none; }
+}
+
 /* ---------- Misc ---------- */
 .stat-card .stat-value {
     font-size: 1.9rem;
