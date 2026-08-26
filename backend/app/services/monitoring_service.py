@@ -56,14 +56,28 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 def _perform_single_attempt(application):
     """Sends one health-check probe (HTTP/HTTPS request or TCP connect,
     depending on the application's configured type) and returns a dict
-    describing the outcome."""
-    if application.health_check_type == "TCP":
-        return _perform_tcp_attempt(application)
-    if application.health_check_type == "DATABASE":
-        return _perform_database_attempt(application)
-    if application.health_check_type == "WORKFLOW":
-        return _perform_workflow_attempt(application)
-    return _perform_http_attempt(application)
+    describing the outcome.
+
+    Each probe catches the failures that are *evidence about the target* - a
+    refused connection, a timeout, a driver refusing the credentials - and
+    reports them as DOWN. Anything that escapes to here is a fault in the
+    monitor instead: a missing driver, a malformed DSN, a bug of ours. That is
+    not evidence of anything, so it is reported as UNKNOWN.
+    """
+    try:
+        if application.health_check_type == "TCP":
+            return _perform_tcp_attempt(application)
+        if application.health_check_type == "DATABASE":
+            return _perform_database_attempt(application)
+        if application.health_check_type == "WORKFLOW":
+            return _perform_workflow_attempt(application)
+        return _perform_http_attempt(application)
+    except Exception as exc:  # noqa: BLE001 - deliberately broad, see below
+        # Broad on purpose. Every narrower except above returns a verdict; the
+        # only thing left here is the monitor breaking, and the one outcome we
+        # must never produce for that is silence.
+        logger.exception("Check for application %s could not run", application.name)
+        return _unrunnable(f"{type(exc).__name__}: {exc}")
 
 
 def _perform_tcp_attempt(application):
@@ -308,6 +322,33 @@ def _perform_http_attempt(application):
         return _failure(start, str(exc))
 
 
+def _unrunnable(message):
+    """The result for a check that never ran.
+
+    On 25 August the MSSQL checks began raising ModuleNotFoundError because
+    pyodbc was installed where the service could not see it. The cycle logged
+    the traceback and moved on, so no health check row was written, no status
+    changed, and both applications sat on the dashboard showing UP for two
+    days while being checked 2,400 times and answering none of them.
+
+    A check that cannot run tells us nothing about the application. §11 is
+    explicit that nothing we are unsure of may read as healthy, so it is
+    recorded as UNKNOWN: visible, not green, and not an outage either -
+    reporting DOWN would be the same lie in the other direction.
+
+    response_time is None rather than 0.0 for the same reason: no probe was
+    timed, and a zero would drag the response-time average towards a
+    performance improvement that never happened.
+    """
+    return {
+        "success": False,
+        "status": "UNKNOWN",
+        "http_status_code": None,
+        "response_time": None,
+        "error_message": redact(f"Check could not run: {message}")[:400],
+    }
+
+
 def _failure(start, message):
     """Builds the standard DOWN result dict for a failed attempt, timing it from `start`.
 
@@ -422,9 +463,17 @@ def _apply_transition(application, result, checked_at):
 
     now_down = result["status"] == "DOWN"
 
+    # A check that never ran is not a success and not a failure; it is a gap in
+    # the record. Clearing the streak on one would discard a genuine outage's
+    # progress towards being confirmed.
+    unrunnable = result["status"] == "UNKNOWN" and not result["success"]
+
     # Consecutive whole checks, not retries inside one check. A blip on a single
     # poll must never alert for a site that is actually serving.
-    application.failure_streak = (application.failure_streak or 0) + 1 if now_down else 0
+    if now_down:
+        application.failure_streak = (application.failure_streak or 0) + 1
+    elif not unrunnable:
+        application.failure_streak = 0
     db.session.commit()
 
     # Driven by whether an incident is actually open, not by the status
@@ -467,7 +516,10 @@ def _apply_transition(application, result, checked_at):
         else:
             logger.info("Application %s failed check %d of %d required - not alerting until confirmed.",
                         application.name, application.failure_streak, required)
-    elif incident:
+    elif incident and result["success"]:
+        # Only an actual success closes an incident. Without the guard, the
+        # monitor losing its database driver would announce every open outage
+        # as recovered.
         incident_service.resolve_incident(incident, checked_at)
         notification_service.send_recovery_notification(incident, application)
         logger.info("Incident #%s resolved for application %s", incident.id, application.name)
