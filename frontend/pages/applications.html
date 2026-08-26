@@ -65,11 +65,25 @@
                             <select class="form-select" id="app-health-check-type">
                                 <option value="HTTP">HTTP</option><option value="HTTPS">HTTPS</option><option value="TCP">TCP</option>
                                 <option value="DATABASE">Database (MySQL / SQL Server)</option>
+                                <option value="WORKFLOW">Workflow (synthetic login / transaction)</option>
                             </select>
                         </div>
                         <div class="col-md-8" id="app-url-group">
                             <label class="form-label" id="app-url-label">URL</label>
                             <input class="form-control" id="app-url" placeholder="https://example.com">
+                        </div>
+                        <div class="col-12 d-none" id="app-workflow-group">
+                            <label class="form-label">Workflow steps</label>
+                            <div id="app-workflow-steps" class="d-flex flex-column gap-2"></div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="app-workflow-add">
+                                <i class="bi bi-plus-lg me-1"></i>Add step
+                            </button>
+                            <div class="form-text">
+                                Steps run in order and share a session. Tick <strong>Login step</strong> on the one that
+                                authenticates &mdash; it then runs only when the session has expired, rather than on
+                                every check. Write passwords as <code>&#36;{VAR_NAME}</code> and set them in the
+                                platform's environment file; a literal password is rejected.
+                            </div>
                         </div>
                         <div class="col-md-4 d-none" id="app-server-group">
                             <label class="form-label">Server / Host</label>

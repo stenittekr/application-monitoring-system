@@ -2,6 +2,8 @@
 from datetime import datetime, timezone
 
 from app.extensions import db
+import json
+
 from app.models.application import Application
 
 APPLICATION_FIELDS = (
@@ -11,6 +13,18 @@ APPLICATION_FIELDS = (
     "retry_count", "retry_delay", "expected_status_code", "verify_ssl",
     "department", "icon", "baseline_notes",
 )
+
+
+def apply_workflow_steps(app_row, data):
+    """Stores the synthetic workflow steps when the caller sent them.
+
+    Kept out of APPLICATION_FIELDS because the column holds JSON while the
+    payload carries a list, and because an absent key must leave an existing
+    workflow alone rather than wiping it."""
+    if "workflow_steps" not in data:
+        return
+    steps = data.get("workflow_steps")
+    app_row.workflow_json = json.dumps(steps) if steps else None
 
 
 def list_applications(user):
@@ -65,6 +79,7 @@ def create_application(data, defaults):
         baseline_notes=(data.get("baseline_notes") or "").strip() or None,
         depends_on=data.get("depends_on") or [],
     )
+    apply_workflow_steps(app_row, data)
     db.session.add(app_row)
     db.session.commit()
     return app_row
@@ -83,6 +98,7 @@ def update_application(app_row, data):
             if field == "port":
                 value = int(value)
             setattr(app_row, field, value)
+    apply_workflow_steps(app_row, data)
     if "maturity_status" in data and data["maturity_status"]:
         app_row.maturity_status = str(data["maturity_status"]).upper()
     if "depends_on" in data:

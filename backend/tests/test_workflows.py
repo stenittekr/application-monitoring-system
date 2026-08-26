@@ -197,3 +197,41 @@ def test_a_workflow_without_a_login_step_is_warned_about():
     assert workflow_warnings(LOGIN_FLOW_WITH_MARKER) == []
     warnings = workflow_warnings([{"name": "Ping", "method": "GET", "path": "/health"}])
     assert warnings and "login step" in warnings[0]
+
+
+def test_a_workflow_survives_a_save_and_reload(db, admin_user):
+    """The editor posts steps; they must come back the same shape."""
+    from app.services import application_service
+
+    steps = [
+        {"name": "Login page", "method": "GET", "path": "/", "expect_contains": "sign in"},
+        {"name": "Sign in", "method": "POST", "path": "/", "login": True,
+         "form": {"username": "svc_monitor", "password": "${SYN_PS_PASSWORD}"},
+         "expect_contains": "dashboard"},
+    ]
+    row = application_service.create_application(
+        {"name": "Portal workflow", "url": "https://ps.example.com", "health_check_type": "WORKFLOW",
+         "owner_email": "o@example.com", "manager_email": "m@example.com",
+         "owner_name": "O", "manager_name": "M", "workflow_steps": steps},
+        {"interval": 300, "timeout": 10, "retry_count": 2, "retry_delay": 3},
+    )
+    assert row.workflow_steps == steps
+
+    application_service.update_application(row, {"workflow_steps": steps[:1]})
+    assert len(row.workflow_steps) == 1
+
+    # An update that does not mention workflow_steps must leave them alone.
+    application_service.update_application(row, {"description": "renamed"})
+    assert len(row.workflow_steps) == 1
+
+
+def test_the_api_rejects_a_workflow_with_a_literal_password(client, admin_headers):
+    response = client.post("/api/applications", headers=admin_headers, json={
+        "name": "Bad workflow", "url": "https://ps.example.com", "health_check_type": "WORKFLOW",
+        "owner_email": "o@example.com", "manager_email": "m@example.com",
+        "owner_name": "O", "manager_name": "M",
+        "workflow_steps": [{"name": "Sign in", "method": "POST", "path": "/",
+                            "form": {"password": "hunter2"}}],
+    })
+    assert response.status_code == 422
+    assert "environment variable" in str(response.get_json())

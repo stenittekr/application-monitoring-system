@@ -70,12 +70,102 @@
         load();
         setInterval(load, 5000); // ponytail: fixed 5s poll, add a setting if that ever needs tuning
 
+        // ---- Workflow step editor -------------------------------------------
+        // Rendered as rows rather than raw JSON: the shape is small and fixed,
+        // and asking someone to hand-write JSON in a textarea is how
+        // configuration errors get made.
+        function workflowRow(step) {
+            step = step || {};
+            const formText = Object.entries(step.form || {})
+                .map(function (e) { return e[0] + "=" + e[1]; }).join("\n");
+            const row = document.createElement("div");
+            row.className = "border rounded p-2 workflow-step";
+            row.innerHTML = [
+                '<div class="row g-2">',
+                '  <div class="col-md-3"><label class="form-label small mb-1">Step name</label>',
+                '    <input class="form-control form-control-sm wf-name" placeholder="Sign in"></div>',
+                '  <div class="col-md-2"><label class="form-label small mb-1">Method</label>',
+                '    <select class="form-select form-select-sm wf-method"><option>GET</option><option>POST</option></select></div>',
+                '  <div class="col-md-3"><label class="form-label small mb-1">Path</label>',
+                '    <input class="form-control form-control-sm wf-path" placeholder="/login"></div>',
+                '  <div class="col-md-2"><label class="form-label small mb-1">Expect status</label>',
+                '    <input type="number" class="form-control form-control-sm wf-status"></div>',
+                '  <div class="col-md-2 d-flex align-items-end">',
+                '    <button type="button" class="btn btn-sm btn-outline-danger w-100 wf-remove">Remove</button></div>',
+                '  <div class="col-md-4"><label class="form-label small mb-1">Page must contain</label>',
+                '    <input class="form-control form-control-sm wf-contains" placeholder="Dashboard"></div>',
+                '  <div class="col-md-4"><label class="form-label small mb-1">Page must NOT contain</label>',
+                '    <input class="form-control form-control-sm wf-absent" placeholder="Invalid username"></div>',
+                '  <div class="col-md-4"><label class="form-label small mb-1">Form fields (one per line, name=value)</label>',
+                '    <textarea class="form-control form-control-sm wf-form" rows="2"></textarea></div>',
+                '  <div class="col-12"><div class="form-check">',
+                '    <input class="form-check-input wf-login" type="checkbox">',
+                '    <label class="form-check-label small">Login step &mdash; runs only when the session has expired</label>',
+                '  </div></div>',
+                '</div>',
+            ].join("");
+
+            // Values are assigned rather than interpolated, so a quote or an
+            // angle bracket in a step cannot break out of the markup.
+            row.querySelector(".wf-name").value = step.name || "";
+            row.querySelector(".wf-method").value = step.method || "GET";
+            row.querySelector(".wf-path").value = step.path || "/";
+            row.querySelector(".wf-status").value = step.expect_status == null ? 200 : step.expect_status;
+            row.querySelector(".wf-contains").value = step.expect_contains || "";
+            row.querySelector(".wf-absent").value = step.expect_absent || "";
+            row.querySelector(".wf-form").value = formText;
+            row.querySelector(".wf-login").checked = !!step.login;
+            row.querySelector(".wf-remove").onclick = function () { row.remove(); };
+            return row;
+        }
+
+        function renderWorkflow(steps) {
+            const host = document.getElementById("app-workflow-steps");
+            host.innerHTML = "";
+            const list = (steps && steps.length) ? steps : [{ path: "/" }];
+            list.forEach(function (step) { host.appendChild(workflowRow(step)); });
+        }
+
+        function collectWorkflow() {
+            const rows = document.querySelectorAll("#app-workflow-steps .workflow-step");
+            return Array.prototype.map.call(rows, function (row) {
+                const form = {};
+                row.querySelector(".wf-form").value.split("\n").forEach(function (line) {
+                    const idx = line.indexOf("=");
+                    if (idx > 0) {
+                        const key = line.slice(0, idx).trim();
+                        if (key) form[key] = line.slice(idx + 1).trim();
+                    }
+                });
+                const step = {
+                    name: row.querySelector(".wf-name").value.trim(),
+                    method: row.querySelector(".wf-method").value,
+                    path: row.querySelector(".wf-path").value.trim() || "/",
+                    expect_status: Number(row.querySelector(".wf-status").value) || 200,
+                    login: row.querySelector(".wf-login").checked,
+                };
+                const contains = row.querySelector(".wf-contains").value.trim();
+                const absent = row.querySelector(".wf-absent").value.trim();
+                if (contains) step.expect_contains = contains;
+                if (absent) step.expect_absent = absent;
+                if (Object.keys(form).length) step.form = form;
+                return step;
+            });
+        }
+
+        document.getElementById("app-workflow-add").addEventListener("click", function () {
+            document.getElementById("app-workflow-steps").appendChild(workflowRow({ path: "/" }));
+        });
+
         // Shows the URL/DSN field for HTTP(S)/DATABASE checks, or server+port for TCP.
         function toggleCheckTypeFields() {
             const type = document.getElementById("app-health-check-type").value;
             const isTcp = type === "TCP";
             const isDb = type === "DATABASE";
-            document.getElementById("app-url-label").textContent = isDb ? "Connection String" : "URL";
+            const isWorkflow = type === "WORKFLOW";
+            document.getElementById("app-workflow-group").classList.toggle("d-none", !isWorkflow);
+            document.getElementById("app-url-label").textContent =
+                isDb ? "Connection String" : (isWorkflow ? "Base URL" : "URL");
             const urlInput = document.getElementById("app-url");
             urlInput.placeholder = isDb
                 ? "mysql+pymysql://user:${DB_PASSWORD}@host:3306/dbname"
@@ -148,6 +238,7 @@
             document.getElementById("app-description").value = app ? (app.description || "") : "";
             document.getElementById("app-health-check-type").value = app ? app.health_check_type : "HTTP";
             document.getElementById("app-url").value = app ? (app.url || "") : "";
+            renderWorkflow(app ? app.workflow_steps : null);
             document.getElementById("app-server").value = app ? (app.server || "") : "";
             document.getElementById("app-port").value = app ? (app.port || "") : "";
             toggleCheckTypeFields();
@@ -190,6 +281,7 @@
                 description: document.getElementById("app-description").value.trim(),
                 health_check_type: healthCheckType,
                 url: document.getElementById("app-url").value.trim(),
+                workflow_steps: healthCheckType === "WORKFLOW" ? collectWorkflow() : undefined,
                 server: document.getElementById("app-server").value.trim(),
                 port: document.getElementById("app-port").value ? Number(document.getElementById("app-port").value) : null,
                 owner_name: document.getElementById("app-owner-name").value.trim(),

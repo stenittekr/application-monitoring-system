@@ -26,6 +26,9 @@
         document.getElementById("apply-filters-btn").addEventListener("click", load);
         document.getElementById("incidents-table-body").addEventListener("click", onTableClick);
         document.getElementById("assign-confirm-btn").addEventListener("click", onAssignConfirm);
+        document.getElementById("incident-note-add").addEventListener("click", addNote);
+        document.getElementById("incident-resolve-btn").addEventListener("click", resolveOpenIncident);
+        document.getElementById("incident-reopen-btn").addEventListener("click", reopenIncident);
     }
 
     // Fills the application and environment filter dropdowns from the loaded applications.
@@ -76,6 +79,7 @@
 
         try {
             const incidents = await api.get(`/incidents?${params.toString()}`);
+            allIncidents = incidents;   // the detail modal looks rows up by id
             renderTable(incidents);
         } catch (err) {
             showError(err);
@@ -111,7 +115,111 @@
             const label = incident.assigned_to ? "Reassign" : "Assign";
             buttons.push(`<button class="btn btn-sm btn-outline-secondary" data-action="assign" data-id="${incident.id}">${label}</button>`);
         }
+        // Notes, resolve and reopen live behind one button rather than three more
+        // columns - the table is already wide.
+        buttons.push(`<button class="btn btn-sm btn-outline-primary" data-action="open" data-id="${incident.id}">Details</button>`);
+        if (incident.reopened_count > 0) {
+            buttons.push(`<span class="badge bg-warning-subtle text-warning-emphasis"
+                                title="Closed and reopened ${incident.reopened_count} time(s)">
+                              reopened ${incident.reopened_count}x</span>`);
+        }
         return buttons.join(" ") || "-";
+    }
+
+    let allIncidents = [];
+    let openIncident = null;
+
+    async function showIncident(incidentId) {
+        const incident = allIncidents.find((i) => i.id === incidentId);
+        if (!incident) return;
+        openIncident = incident;
+
+        document.getElementById("incident-modal-title").textContent =
+            `Incident #${incident.id} - ${incident.status}`;
+        document.getElementById("incident-summary").innerHTML = `
+            <div class="small text-muted">Reason</div>
+            <div class="mb-2">${escapeHtml(incident.reason || incident.error_message || "Not recorded")}</div>
+            <div class="row small text-muted">
+                <div class="col-sm-4">Detected: ${formatDateTime(incident.detected_at)}</div>
+                <div class="col-sm-4">Resolved: ${incident.resolved_at ? formatDateTime(incident.resolved_at) : "-"}</div>
+                <div class="col-sm-4">Kind: ${escapeHtml(incident.kind || "REACHABILITY")}</div>
+            </div>
+            ${incident.resolution_category
+                ? `<div class="small mt-2">Cause: <strong>${escapeHtml(incident.resolution_category)}</strong>
+                   ${incident.resolution_note ? " - " + escapeHtml(incident.resolution_note) : ""}</div>`
+                : ""}`;
+
+        // Resolve applies to an open incident; reopen to a closed one. Never both.
+        const isOpen = incident.status === "OPEN";
+        document.getElementById("incident-resolve-panel").classList.toggle("d-none", !isOpen || !canAct);
+        document.getElementById("incident-reopen-panel").classList.toggle("d-none", isOpen || !canAct);
+        document.getElementById("incident-note-input").value = "";
+        document.getElementById("incident-resolve-note").value = "";
+        document.getElementById("incident-reopen-reason").value = "";
+
+        await renderNotes(incident.id);
+        new bootstrap.Modal(document.getElementById("incident-modal")).show();
+    }
+
+    async function renderNotes(incidentId) {
+        const container = document.getElementById("incident-notes");
+        try {
+            const notes = await api.get(`/incidents/${incidentId}/notes`);
+            container.innerHTML = notes.length
+                ? notes.map((n) => `
+                    <div class="border-start border-2 ps-2 mb-2">
+                        <div class="small text-muted">
+                            ${escapeHtml(n.user_name || "Unknown")} &middot; ${formatDateTime(n.created_at)}
+                        </div>
+                        <div>${escapeHtml(n.note)}</div>
+                    </div>`).join("")
+                : `<div class="text-muted small fst-italic">No notes yet.</div>`;
+        } catch (err) {
+            container.innerHTML = `<div class="text-muted small">Could not load notes.</div>`;
+        }
+    }
+
+    async function addNote() {
+        const input = document.getElementById("incident-note-input");
+        const note = input.value.trim();
+        if (!note || !openIncident) return;
+        try {
+            await api.post(`/incidents/${openIncident.id}/notes`, { note });
+            input.value = "";
+            await renderNotes(openIncident.id);
+        } catch (err) {
+            showError(err);
+        }
+    }
+
+    async function resolveOpenIncident() {
+        if (!openIncident) return;
+        try {
+            await api.post(`/incidents/${openIncident.id}/resolve`, {
+                category: document.getElementById("incident-resolve-category").value,
+                note: document.getElementById("incident-resolve-note").value.trim(),
+            });
+            bootstrap.Modal.getInstance(document.getElementById("incident-modal")).hide();
+            await load();
+        } catch (err) {
+            showError(err);
+        }
+    }
+
+    async function reopenIncident() {
+        if (!openIncident) return;
+        const reason = document.getElementById("incident-reopen-reason").value.trim();
+        if (!reason) {
+            showError(new Error("A reason is required to reopen an incident."));
+            return;
+        }
+        try {
+            await api.post(`/incidents/${openIncident.id}/reopen`, { reason });
+            bootstrap.Modal.getInstance(document.getElementById("incident-modal")).hide();
+            await load();
+        } catch (err) {
+            showError(err);
+        }
     }
 
     // Renders one incident as a table row.
@@ -147,6 +255,7 @@
         const btn = event.target.closest("button[data-action]");
         if (!btn) return;
         const incidentId = Number(btn.dataset.id);
+        if (btn.dataset.action === "open") showIncident(incidentId);
         if (btn.dataset.action === "acknowledge") acknowledgeIncident(incidentId);
         if (btn.dataset.action === "assign") openAssignModal(incidentId);
     }
