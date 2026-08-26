@@ -396,6 +396,89 @@ def evaluate_component_checks(server):
     return incident
 
 
+# An application answering on a host proves the machine is up, but only a recent
+# answer proves it is up *now*. Comfortably longer than the slowest monitoring
+# interval, so one skipped cycle does not silently withdraw the evidence.
+CORROBORATION_MAX_AGE_SECONDS = 900
+
+
+def _as_utc(value):
+    """Naive timestamps out of SQLite are UTC; this makes that explicit."""
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def applications_confirm_host(server):
+    """Are applications on this server demonstrably serving traffic right now?
+
+    Returns True (a recent check passed), False (recent checks all failed), or
+    None (nothing linked to this server has been checked recently, so there is
+    no evidence either way).
+
+    The mirror of monitoring_service.host_is_reachable(). There, a live
+    heartbeat vouches for a failed application check; here a passing
+    application check vouches for a missing heartbeat. In both directions the
+    evidence travels a different path from the signal it is judging, which is
+    the only reason it is worth anything.
+
+    Only applications explicitly linked through hosted_on_server_id count. An
+    unlinked application says nothing about this particular host.
+    """
+    from app.models.application import Application
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=CORROBORATION_MAX_AGE_SECONDS)
+    evidence = False
+    for application in Application.query.filter(
+            Application.hosted_on_server_id == server.id,
+            Application.deleted_at.is_(None),
+            Application.monitoring_enabled.is_(True)).all():
+        checked = _as_utc(application.last_checked_at)
+        if checked is None or checked < cutoff:
+            continue  # too old to say anything about the here and now
+        evidence = True
+        # last_successful_check_at is stamped with the same instant as
+        # last_checked_at on success, so equality means the newest check passed.
+        if _as_utc(application.last_successful_check_at) == checked:
+            return True
+    return False if evidence else None
+
+
+def _agent_not_reporting(server, last_heartbeat, now):
+    """Records a silent agent on a host that is demonstrably still serving.
+
+    AGENT_DOWN rather than DOWN, because those are different faults with
+    different fixes: DOWN means go and look at the machine, AGENT_DOWN means go
+    and look at the agent. Calling this one DOWN pages somebody at 3am about a
+    server that is answering HTTP 200, and the alert they learn to ignore is
+    the same alert that matters when the machine really does fall over.
+
+    Any REACHABILITY incident already open on that mistaken premise is closed
+    here, silently - nothing recovered, so nobody is told that it did.
+    """
+    quiet_minutes = int((now - last_heartbeat).total_seconds() / 60)
+    if server.current_status != "AGENT_DOWN":
+        server.current_status = "AGENT_DOWN"
+        db.session.commit()
+        logger.warning(
+            "Server %s has not reported for %d minutes, but its applications are "
+            "responding - recording AGENT_DOWN, not an outage. Check the agent "
+            "service and its hub_url.", server.hostname, quiet_minutes)
+
+    incident = incident_service.get_active_incident(server_id=server.id, kind="REACHABILITY")
+    if incident:
+        incident_service.resolve_incident(incident, now)
+        incident.resolution_category = "False alarm - monitoring"
+        incident.resolution_note = (
+            f"Applications hosted on {server.hostname} are responding, so the server "
+            f"is running; only its agent has stopped reporting ({quiet_minutes} "
+            f"minutes). Closed automatically - this was not an outage."
+        )
+        db.session.commit()
+        logger.info("Incident #%s closed: %s is serving traffic, the agent is not reporting.",
+                    incident.id, server.hostname)
+
+
 def check_missed_heartbeats(suppress_incidents=False):
     """Scans all servers for missed heartbeats and opens/keeps an incident open
     for any that have gone quiet too long. Called every monitoring cycle,
@@ -416,7 +499,14 @@ def check_missed_heartbeats(suppress_incidents=False):
         if now - last <= grace:
             continue  # still within tolerance
 
-        if server.current_status != "DOWN":
+        # A missing heartbeat means we have lost contact with the agent. Whether
+        # we have lost the *server* is a separate question, and one the
+        # applications running on it can answer.
+        if applications_confirm_host(server) is True:
+            _agent_not_reporting(server, last, now)
+            continue
+
+        if server.current_status not in ("DOWN", "AGENT_DOWN"):
             server.current_status = "DOWN"
             db.session.commit()
             if suppress_incidents:

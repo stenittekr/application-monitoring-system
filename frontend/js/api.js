@@ -127,9 +127,26 @@ function formatDateTime(iso) {
 }
 
 // Builds the small colored status badge HTML for a given status string.
+// Statuses whose stored name is not what a person should be shown. The badge
+// has to answer "what do I do about it" at a glance, and AGENT_DOWN read as
+// shouty machine-speak is the same trap as calling the server DOWN.
+const STATUS_LABELS = {
+    AGENT_DOWN: "Agent not reporting",
+    STALE: "No fresh data",
+};
+
+const STATUS_TITLES = {
+    AGENT_DOWN: "The server is running - its applications are responding - but its "
+        + "agent has stopped checking in. Check the agent service and the hub_url "
+        + "in its config.json.",
+    STALE: "The last heartbeat is too old for these metrics to be trusted.",
+};
+
 function statusBadge(status) {
-    const label = status || "UNKNOWN";
-    return `<span class="status-badge status-${label}">${label}</span>`;
+    const key = status || "UNKNOWN";
+    const label = STATUS_LABELS[key] || key;
+    const title = STATUS_TITLES[key] ? ` title="${STATUS_TITLES[key]}"` : "";
+    return `<span class="status-badge status-${key}"${title}>${label}</span>`;
 }
 
 /** Returns a Promise<boolean> resolved by the user's choice in a Bootstrap modal. */

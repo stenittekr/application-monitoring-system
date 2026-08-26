@@ -96,7 +96,9 @@ class Server(db.Model):
         """The status to display. STALE sits between "reporting" and the DOWN
         that check_missed_heartbeats raises later, so data gaps are visible
         immediately instead of masquerading as the last known good reading."""
-        if self.current_status in ("DOWN", "UNKNOWN"):
+        # AGENT_DOWN already says "no fresh data" and says why, so STALE
+        # would only blur it.
+        if self.current_status in ("DOWN", "UNKNOWN", "AGENT_DOWN"):
             return self.current_status
         return "STALE" if self.is_stale else self.current_status
 

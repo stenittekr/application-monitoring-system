@@ -102,3 +102,121 @@ def test_recovery_from_unknown_still_works(db, sample_application):
         with patch("app.services.notification_service.send_email"):
             run_health_check(sample_application)
     assert sample_application.current_status == "UP"
+
+
+# --------------------------------------------------------------------------
+# The same rule, run backwards.
+#
+# PS_QAS read DOWN for 45 hours while the application on it answered HTTP 200
+# in 49ms on every single check. The server was never down; its agent had been
+# left pointing at a hub address that had since moved. These pin the rule that
+# tells those two apart, without silencing a server that really has died.
+# --------------------------------------------------------------------------
+from app.services.server_service import applications_confirm_host, check_missed_heartbeats
+
+
+def _serving(db, application, server, ok=True, minutes_ago=0):
+    """Records that an application on this host was just checked."""
+    when = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    application.hosted_on_server_id = server.id
+    application.last_checked_at = when
+    if ok:
+        application.last_successful_check_at = when
+    else:
+        application.last_failed_check_at = when
+    db.session.commit()
+
+
+def test_a_serving_host_is_agent_down_not_down(db, sample_application):
+    """The PS_QAS case. Applications answering, agent silent for 45 hours."""
+    host = _host(db, minutes_since_heartbeat=2700)
+    _serving(db, sample_application, host)
+
+    with patch("app.services.notification_service.send_email") as mock_send:
+        check_missed_heartbeats()
+
+    assert host.current_status == "AGENT_DOWN"
+    assert host.current_status != "DOWN", "a machine answering HTTP 200 is not down"
+    assert not mock_send.called, "nobody gets paged for a reporting fault"
+
+
+def test_a_host_whose_applications_also_fail_is_still_down(db, sample_application):
+    """The genuine outage. Both signals gone, so the server really is missing."""
+    host = _host(db, minutes_since_heartbeat=2700)
+    _serving(db, sample_application, host, ok=False)
+
+    with patch("app.services.notification_service.send_email") as mock_send:
+        check_missed_heartbeats()
+
+    assert host.current_status == "DOWN"
+    assert Incident.query.filter_by(server_id=host.id, kind="REACHABILITY").count() == 1
+    assert mock_send.called, "a real outage must still alert"
+
+
+def test_a_host_with_no_linked_application_behaves_as_before(db):
+    """Nothing to corroborate with is not a reason to stop alerting."""
+    host = _host(db, minutes_since_heartbeat=2700)
+
+    with patch("app.services.notification_service.send_email") as mock_send:
+        check_missed_heartbeats()
+
+    assert host.current_status == "DOWN"
+    assert mock_send.called
+
+
+def test_stale_application_evidence_does_not_vouch_for_a_host(db, sample_application):
+    """A check that passed yesterday says nothing about the machine today."""
+    host = _host(db, minutes_since_heartbeat=2700)
+    _serving(db, sample_application, host, minutes_ago=180)
+
+    assert applications_confirm_host(host) is None
+    with patch("app.services.notification_service.send_email"):
+        check_missed_heartbeats()
+    assert host.current_status == "DOWN"
+
+
+def test_a_false_reachability_incident_is_closed_silently(db, sample_application):
+    """An incident opened before the applications recovered rested on a premise
+    that no longer holds, so it is closed - but nothing recovered, so no
+    recovery mail goes out claiming otherwise."""
+    host = _host(db, minutes_since_heartbeat=2700)
+    with patch("app.services.notification_service.send_email"):
+        check_missed_heartbeats()                       # opens the incident
+    incident = Incident.query.filter_by(server_id=host.id, kind="REACHABILITY").one()
+    assert incident.status == "OPEN"
+
+    _serving(db, sample_application, host)              # applications now answering
+    with patch("app.services.notification_service.send_email") as mock_send:
+        check_missed_heartbeats()
+
+    assert incident.status == "RESOLVED"
+    assert incident.resolution_category == "False alarm - monitoring"
+    assert host.current_status == "AGENT_DOWN"
+    assert not mock_send.called
+
+
+def test_a_returning_agent_clears_agent_down_without_a_recovery_mail(db, sample_application):
+    """Nothing was ever declared down, so nothing gets announced as recovered."""
+    host = _host(db, minutes_since_heartbeat=2700)
+    _serving(db, sample_application, host)
+    with patch("app.services.notification_service.send_email"):
+        check_missed_heartbeats()
+    assert host.current_status == "AGENT_DOWN"
+
+    with patch("app.services.notification_service.send_email") as mock_send:
+        server_service.record_heartbeat(host, {"cpu_percent": 5, "ram_percent": 60, "disk_percent": 40})
+
+    assert host.current_status == "UP"
+    assert not mock_send.called
+
+
+def test_agent_down_never_reads_as_healthy(db, sample_application):
+    """§11: a status we are unsure of must never be shown as green."""
+    host = _host(db, minutes_since_heartbeat=2700)
+    _serving(db, sample_application, host)
+    with patch("app.services.notification_service.send_email"):
+        check_missed_heartbeats()
+
+    assert host.effective_status == "AGENT_DOWN"
+    assert host.effective_status != "UP"
+    assert host.is_stale, "its metrics are still too old to trust"
