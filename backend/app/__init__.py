@@ -85,6 +85,43 @@ def create_app(config_object=Config):
         """Returns a simple OK payload used for health-check pings on the API itself."""
         return {"success": True, "data": {"status": "ok"}}
 
+    def _first_line(text):
+        """The summary line of a docstring, or an empty string."""
+        return (text or "").strip().splitlines()[0].strip() if (text or "").strip() else ""
+
+    @app.get("/api")
+    def api_index():
+        """Lists the API's own routes.
+
+        FR-022 asks for a documented API. Browsing to /api previously returned
+        "Resource not found", which is technically correct - it is a prefix, not
+        a route - and useless to anyone trying to find their way around.
+
+        Built from the URL map rather than a hand-written list, so it cannot
+        drift out of date as endpoints are added.
+        """
+        routes = []
+        for rule in app.url_map.iter_rules():
+            if not str(rule).startswith("/api/"):
+                continue
+            methods = sorted(rule.methods - {"HEAD", "OPTIONS"})
+            routes.append({
+                "path": str(rule),
+                "methods": methods,
+                "description": _first_line(app.view_functions[rule.endpoint].__doc__),
+            })
+        routes.sort(key=lambda r: r["path"])
+        return {
+            "success": True,
+            "data": {
+                "name": "Centralized Server & Application Monitoring Platform API",
+                "authentication": "Bearer JWT from POST /api/auth/login, except "
+                                  "/api/servers/heartbeat which uses the X-Agent-Token header.",
+                "endpoint_count": len(routes),
+                "endpoints": routes,
+            },
+        }
+
     @app.get("/")
     def index():
         """Serves the frontend's index.html for the root route."""
