@@ -65,6 +65,11 @@ class Application(db.Model):
     # Layer 5: a declarative synthetic business transaction. JSON steps, never
     # code - see workflow_service for the vocabulary and why it is limited.
     workflow_json = db.Column(db.Text, nullable=True)
+    # The server this application runs on, where we monitor it. Its agent is a
+    # second witness: heartbeats travel the same network path in reverse, so a
+    # live agent proves the path works and a failed check is the application's
+    # fault - while both being silent means we simply cannot see that host.
+    hosted_on_server_id = db.Column(db.Integer, db.ForeignKey("servers.id"), nullable=True)
     baseline_notes = db.Column(db.Text, nullable=True)
 
     last_checked_at = db.Column(db.DateTime, nullable=True)
@@ -173,6 +178,7 @@ class Application(db.Model):
             "cert_expires_at": self.cert_expires_at.isoformat() if self.cert_expires_at else None,
             "cert_issuer": self.cert_issuer,
             "workflow_steps": self.workflow_steps,
+            "hosted_on_server_id": self.hosted_on_server_id,
             "cert_days_remaining": self.cert_days_remaining,
             "tracked_databases": self.tracked_databases,
             "baseline_notes": self.baseline_notes,

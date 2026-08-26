@@ -324,6 +324,36 @@ def _failure(start, message):
     }
 
 
+# A heartbeat older than this many of the server's own intervals means the agent
+# is not currently reaching us either.
+CORROBORATION_STALE_INTERVALS = 3
+
+
+def host_is_reachable(application):
+    """Is the application's host demonstrably in contact with us right now?
+
+    Returns True (agent heartbeating), False (agent silent), or None (no host
+    recorded, so there is nothing to corroborate with).
+
+    An agent heartbeat is inbound over the same network path our outbound check
+    uses. A live heartbeat therefore proves the path works, which makes a failed
+    HTTP check the application's fault. Both failing together means the path
+    itself is gone, and blaming the application would be a guess.
+    """
+    if not application.hosted_on_server_id:
+        return None
+    from app.models.server import Server
+
+    server = db.session.get(Server, application.hosted_on_server_id)
+    if not server or not server.last_heartbeat_at:
+        return None
+    last = server.last_heartbeat_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    allowed = (server.heartbeat_interval_seconds or 60) * CORROBORATION_STALE_INTERVALS
+    return (datetime.now(timezone.utc) - last).total_seconds() <= allowed
+
+
 def apply_transition_from(application, health_check):
     """Drives the incident/notification lifecycle from an already-persisted check.
 
@@ -405,6 +435,20 @@ def _apply_transition(application, result, checked_at):
     required = _checks_before_incident()
 
     if now_down:
+        # Before blaming the application, check whether we can see its host at
+        # all. §11 is explicit that Unknown must never read as healthy - it does
+        # not alert, but it is not UP either.
+        corroborated = host_is_reachable(application)
+        if corroborated is False and not incident:
+            application.current_status = "UNKNOWN"
+            db.session.commit()
+            logger.warning(
+                "Application %s failed, but its host %s is not reaching us either - "
+                "recording UNKNOWN rather than DOWN. This looks like a network path "
+                "problem between the monitor and that host, not an application fault.",
+                application.name, application.hosted_on_server_id)
+            return
+
         if incident:
             notification_service.maybe_send_reminder(incident, application)
         elif application.failure_streak >= required:
