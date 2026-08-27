@@ -66,3 +66,66 @@ def test_the_flag_defaults_to_copying_everyone(db, cc_list):
     assert server.owner_only_alerts is False
     row, mock_send = _notify(db, server)
     assert "ajoy@awgtc.com" in (mock_send.call_args.kwargs.get("cc_addr") or "")
+
+
+# --------------------------------------------------------------------------
+# The platform cannot be unreachable from itself.
+#
+# On 27 August the monitor wrote "FUJALW-LAP-STENITTE is unreachable" into a
+# log file on FUJALW-LAP-STENITTE. Its agent had missed one heartbeat while the
+# machine was busy; the platform was running throughout, and completed ten
+# cycles in the same window it declared the host unreachable.
+# --------------------------------------------------------------------------
+import socket
+from datetime import timedelta
+
+from app.services.server_service import check_missed_heartbeats, is_this_machine
+
+
+def _silent_server(db, hostname):
+    row, _ = server_service.enroll({"hostname": hostname, "owner_email": "stenitte@awgtc.com"})
+    row.heartbeat_interval_seconds = 60
+    row.last_heartbeat_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+    db.session.commit()
+    return row
+
+
+def test_the_platforms_own_host_is_never_declared_unreachable(db):
+    server = _silent_server(db, socket.gethostname())
+    assert is_this_machine(server)
+
+    with patch("app.services.notification_service.send_email") as mock_send:
+        check_missed_heartbeats()
+
+    assert server.current_status == "AGENT_DOWN", "the gap is recorded"
+    assert server.current_status != "DOWN", "but not as an outage"
+    assert Incident.query.filter_by(server_id=server.id, kind="REACHABILITY").count() == 0
+    assert not mock_send.called
+
+
+def test_another_silent_server_still_alerts(db):
+    server = _silent_server(db, "SOME-OTHER-BOX")
+    assert not is_this_machine(server)
+
+    with patch("app.services.notification_service.send_email") as mock_send:
+        check_missed_heartbeats()
+
+    assert server.current_status == "DOWN"
+    assert mock_send.called
+
+
+def test_an_incident_opened_before_this_rule_is_closed(db):
+    """Incident #40 was open on exactly this mistaken premise."""
+    server = _silent_server(db, socket.gethostname())
+    now = datetime.now(timezone.utc)
+    db.session.add(Incident(server_id=server.id, status="OPEN", kind="REACHABILITY",
+                            reason="Missed heartbeat", started_at=now, detected_at=now))
+    db.session.commit()
+
+    with patch("app.services.notification_service.send_email") as mock_send:
+        check_missed_heartbeats()
+
+    incident = Incident.query.filter_by(server_id=server.id, kind="REACHABILITY").one()
+    assert incident.status == "RESOLVED"
+    assert incident.resolution_category == "False alarm - monitoring"
+    assert not mock_send.called

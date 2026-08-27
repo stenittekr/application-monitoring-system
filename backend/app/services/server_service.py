@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import secrets
+import socket
 from datetime import datetime, timedelta, timezone
 
 from app.extensions import db
@@ -516,6 +517,15 @@ def _agent_not_reporting(server, last_heartbeat, now):
                     incident.id, server.hostname)
 
 
+def is_this_machine(server):
+    """Is this the machine the platform itself is running on?
+
+    Matched on hostname rather than configured, so it stays correct when the
+    platform moves to another server - the answer changes by itself.
+    """
+    return (server.hostname or "").strip().lower() == socket.gethostname().strip().lower()
+
+
 def check_missed_heartbeats(suppress_incidents=False):
     """Scans all servers for missed heartbeats and opens/keeps an incident open
     for any that have gone quiet too long. Called every monitoring cycle,
@@ -535,6 +545,29 @@ def check_missed_heartbeats(suppress_incidents=False):
         grace = timedelta(seconds=server.heartbeat_interval_seconds * MISSED_INTERVALS_BEFORE_DOWN)
         if now - last <= grace:
             continue  # still within tolerance
+
+        # The platform cannot be unreachable from itself. If this code is
+        # running, the machine it is running on is up, whatever its agent did -
+        # on 27 August the monitor wrote "FUJALW-LAP-STENITTE is unreachable"
+        # into a log file on FUJALW-LAP-STENITTE, because the agent missed one
+        # heartbeat while the machine was busy. The gap is still recorded and
+        # still shows as stale; it is only the outage claim that is withdrawn.
+        if is_this_machine(server):
+            if server.current_status != "AGENT_DOWN":
+                server.current_status = "AGENT_DOWN"
+                db.session.commit()
+                logger.info("Agent on %s (this machine) has not reported for %ds. The platform "
+                            "is running here, so this is the agent, not an outage.",
+                            server.hostname, int((now - last).total_seconds()))
+            incident = incident_service.get_active_incident(server_id=server.id, kind="REACHABILITY")
+            if incident:
+                incident_service.resolve_incident(incident, now)
+                incident.resolution_category = "False alarm - monitoring"
+                incident.resolution_note = (
+                    "The monitoring platform runs on this machine, so it cannot have been "
+                    "unreachable. Closed automatically.")
+                db.session.commit()
+            continue
 
         # A missing heartbeat means we have lost contact with the agent. Whether
         # we have lost the *server* is a separate question, and one the
