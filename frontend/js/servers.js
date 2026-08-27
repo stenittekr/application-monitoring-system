@@ -136,6 +136,134 @@
 
     // Which components this server is expected to be running. Discovery lists
     // candidates; ticking one is the authorised decision to monitor it.
+    // Section 8 asks for per-core CPU, network errors and drops, hardware
+    // readings and every volume - and is explicit that where a machine exposes
+    // none of it the answer is "Not available", never a comfortable zero.
+    function notAvailable(why) {
+        return `<div class="text-muted small py-2">Not available &mdash; ${escapeHtml(why)}</div>`;
+    }
+
+    function renderHostHealth(server) {
+        const box = document.getElementById("health-body");
+        const bar = (label, percent) => {
+            const tone = percent >= 90 ? "danger" : percent >= 75 ? "warning" : "success";
+            return `<div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="small text-muted" style="width:5.5rem">${escapeHtml(label)}</span>
+                        <div class="progress flex-grow-1" style="height:.6rem">
+                            <div class="progress-bar bg-${tone}" style="width:${Math.min(100, percent)}%"></div>
+                        </div>
+                        <span class="small" style="width:3rem">${percent}%</span>
+                    </div>`;
+        };
+
+        const cores = server.cpu_per_core || [];
+        const coresHtml = cores.length
+            ? cores.map((v, i) => bar(`Core ${i}`, Math.round(v))).join("")
+            : notAvailable("this agent does not report per-core CPU (needs v0.7.0)");
+
+        const volumes = server.disk_volumes || [];
+        const volumesHtml = volumes.length
+            ? volumes.map((v) => bar(`${v.mount} (${v.total_gb} GB)`, Math.round(v.used_percent))).join("")
+            : notAvailable("this agent reports only the system drive (needs v0.7.0)");
+
+        const nics = server.network_interfaces || [];
+        const nicsHtml = nics.length
+            ? `<table class="table table-sm mb-0"><thead><tr><th>Interface</th><th>State</th><th>Speed</th><th>Errors</th><th>Drops</th></tr></thead><tbody>`
+              + nics.map((n) => `<tr>
+                    <td>${escapeHtml(n.name)}</td>
+                    <td>${n.up ? '<span class="text-success">Up</span>' : '<span class="text-muted">Down</span>'}</td>
+                    <td>${n.speed_mbps ? n.speed_mbps + " Mbps" : '<span class="text-muted">-</span>'}</td>
+                    <td>${n.errors === null ? "-" : `<span class="${n.errors ? "text-danger" : ""}">${n.errors}</span>`}</td>
+                    <td>${n.drops === null ? "-" : `<span class="${n.drops ? "text-danger" : ""}">${n.drops}</span>`}</td>
+                 </tr>`).join("") + "</tbody></table>"
+            : notAvailable("this agent does not report network counters (needs v0.7.0)");
+
+        const hw = server.hardware || {};
+        const hwParts = [];
+        if (hw.temperature_c !== undefined) hwParts.push(`Temperature ${hw.temperature_c} &deg;C`);
+        if (hw.fan_rpm !== undefined) hwParts.push(`Fan ${hw.fan_rpm} rpm`);
+        if (hw.battery_percent !== undefined) {
+            hwParts.push(`Battery ${hw.battery_percent}%${hw.on_mains ? " (on mains)" : " (on battery)"}`);
+        }
+        const hwHtml = hwParts.length
+            ? `<div class="small">${hwParts.join(" &middot; ")}</div>`
+            : notAvailable("this machine exposes no temperature, fan or power readings");
+
+        const skew = server.clock_skew_seconds;
+        const clockHtml = skew === null || skew === undefined
+            ? notAvailable("this agent does not report its clock (needs v0.7.0)")
+            : server.clock_is_trustworthy
+                ? `<div class="small text-success">In step with the platform (${skew >= 0 ? "+" : ""}${skew}s)</div>`
+                : `<div class="small text-danger">Out by ${Math.round(Math.abs(skew) / 60)} minutes.
+                     This machine's own logs and certificate checks will be affected.</div>`;
+
+        const containers = server.containers || [];
+        const containersHtml = containers.length
+            ? containers.map((c) => `<div class="small"><code>${escapeHtml(c.name)}</code>
+                 ${escapeHtml(c.image)} &mdash; ${escapeHtml(c.status)}</div>`).join("")
+            : notAvailable("no containers running, or Docker is not installed here");
+
+        box.innerHTML = `
+            <div class="row g-3">
+                <div class="col-md-6"><h6 class="small text-uppercase text-muted">CPU per core</h6>${coresHtml}</div>
+                <div class="col-md-6"><h6 class="small text-uppercase text-muted">Volumes</h6>${volumesHtml}
+                    <div id="capacity-forecast" class="small mt-2 text-muted">Checking growth rate&hellip;</div></div>
+                <div class="col-12"><h6 class="small text-uppercase text-muted">Network</h6>${nicsHtml}</div>
+                <div class="col-md-4"><h6 class="small text-uppercase text-muted">Hardware</h6>${hwHtml}</div>
+                <div class="col-md-4"><h6 class="small text-uppercase text-muted">Clock</h6>${clockHtml}</div>
+                <div class="col-md-4"><h6 class="small text-uppercase text-muted">Containers</h6>${containersHtml}</div>
+            </div>`;
+
+        loadForecast(server.id);
+    }
+
+    // The rate, not the percentage. "84% full" cannot tell you whether that took
+    // two years or two days, and only one of those needs doing something about.
+    async function loadForecast(serverId) {
+        const box = document.getElementById("capacity-forecast");
+        if (!box) return;
+        try {
+            const data = await api.get(`/servers/${serverId}/capacity`);
+            const f = data.forecast;
+            if (!f) {
+                box.textContent = "Not enough history yet to estimate a growth rate.";
+                return;
+            }
+            const rate = f.growth_percent_per_day;
+            if (f.days_until_full === null) {
+                box.textContent = `Growing ${rate}% a day over ${f.observed_days} days - no date worth quoting.`;
+                return;
+            }
+            const tone = f.days_until_full < 30 ? "text-danger" : f.days_until_full < 90 ? "text-warning" : "text-muted";
+            box.className = `small mt-2 ${tone}`;
+            box.textContent = `Growing ${rate}% a day. Full in about ${f.days_until_full} days`
+                + (f.full_on ? ` (around ${f.full_on})` : "") + `, from ${f.observed_days} days of readings.`;
+        } catch (err) {
+            box.textContent = "Growth rate unavailable.";
+        }
+    }
+
+    function renderScheduledTasks(server) {
+        const body = document.getElementById("tasks-body");
+        const tasks = server.scheduled_tasks || [];
+        if (!tasks.length) {
+            body.innerHTML = `<tr><td colspan="5" class="text-muted text-center py-3">
+                No scheduled tasks reported. Agents below v0.7.0 do not collect them.</td></tr>`;
+            return;
+        }
+        body.innerHTML = tasks.map((t) => {
+            // "0" is success in the Windows world; anything else is worth seeing.
+            const failed = t.last_result && t.last_result !== "0";
+            return `<tr>
+                <td><code class="small">${escapeHtml(t.name)}</code></td>
+                <td>${escapeHtml(t.status || "-")}</td>
+                <td class="small">${escapeHtml(t.last_run || "-")}</td>
+                <td class="small ${failed ? "text-danger" : "text-success"}">${escapeHtml(t.last_result || "-")}</td>
+                <td class="small">${escapeHtml(t.next_run || "-")}</td>
+            </tr>`;
+        }).join("");
+    }
+
     function checkbox(kind, name, expected) {
         const checked = expected.some((e) => e.toLowerCase() === (name || "").toLowerCase());
         return `<input class="form-check-input expected-box" type="checkbox" data-kind="${kind}"
@@ -276,6 +404,8 @@
             }
         };
 
+        renderScheduledTasks(server);
+        renderHostHealth(server);
         new bootstrap.Modal(document.getElementById("discovery-modal")).show();
     }
 })();

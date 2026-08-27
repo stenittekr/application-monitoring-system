@@ -261,6 +261,10 @@
             document.getElementById("app-retry-delay").value = app ? app.retry_delay : 5;
             document.getElementById("app-expected-status").value = app ? app.expected_status_code : 200;
             fillServerSelects(app);
+            document.getElementById("app-sla-target").value =
+                app && app.sla_target_percent !== null && app.sla_target_percent !== undefined
+                    ? app.sla_target_percent : "";
+            document.getElementById("app-site").value = (app && app.site) || "";
             document.getElementById("app-criticality").value = (app && app.criticality) || "";
             document.getElementById("app-support-hours").value = (app && app.support_hours) || "";
             document.getElementById("app-monitoring-enabled").checked = app ? app.monitoring_enabled : true;
@@ -306,6 +310,9 @@
                 expected_status_code: Number(document.getElementById("app-expected-status").value),
                 hosted_on_server_id: document.getElementById("app-hosted-on").value || null,
                 network_witness_server_id: document.getElementById("app-network-witness").value || null,
+                sla_target_percent: document.getElementById("app-sla-target").value === ""
+                    ? null : Number(document.getElementById("app-sla-target").value),
+                site: document.getElementById("app-site").value.trim() || null,
                 criticality: document.getElementById("app-criticality").value || null,
                 support_hours: document.getElementById("app-support-hours").value.trim() || null,
                 monitoring_enabled: document.getElementById("app-monitoring-enabled").checked,

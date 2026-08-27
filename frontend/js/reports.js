@@ -86,6 +86,19 @@
         }
     }
 
+    // A target nobody set is not a target missed. Saying "no target" is the
+    // honest answer; assuming 99.9 would mark every application as failing
+    // something it was never asked to meet.
+    function slaCell(row) {
+        if (row.sla_target_percent === null || row.sla_target_percent === undefined) {
+            return '<span class="text-muted small">no target</span>';
+        }
+        const met = row.sla_met;
+        return `<span class="badge bg-${met ? "success" : "danger"}-subtle text-${met ? "success" : "danger"}-emphasis border border-${met ? "success" : "danger"}-subtle">
+                    ${met ? "met" : "missed"}</span>
+                <span class="small text-muted">target ${row.sla_target_percent}%</span>`;
+    }
+
     // Picks a color/label for an availability percentage over the report window.
     // Deliberately NOT the UP/DOWN/DEGRADED words used for live status elsewhere -
     // this reflects a historical score, not whether the app is up right now.
@@ -108,6 +121,7 @@
                 <td>${escapeHtml(r.environment)}</td>
                 <td>${r.successful_checks}/${r.total_checks}</td>
                 <td><span class="badge ${availabilityTier(r.availability_percent).cls}">${availabilityTier(r.availability_percent).label}</span> ${r.availability_percent}%</td>
+                <td>${slaCell(r)}</td>
                 <td>${r.avg_response_time !== null ? Math.round(r.avg_response_time) + " ms" : "-"}</td>
                 <td>${r.incident_count}</td>
                 <td>${formatMinutes(r.avg_downtime_seconds)}</td>

@@ -42,6 +42,8 @@
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-ports">Ports</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-processes">Processes</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-programs">Installed Programs</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-tasks">Scheduled Tasks</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-health">Host Health</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-changes">Changes</button></li>
                 </ul>
                 <div class="tab-content pt-3">
@@ -68,6 +70,15 @@
                             <thead><tr><th style="width:5rem">Monitor</th><th>Process</th><th>Script / Module</th><th>PID</th><th>User</th><th class="text-end">Memory</th></tr></thead>
                             <tbody id="discovery-processes-body"></tbody>
                         </table>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-tasks">
+                        <div class="table-responsive"><table class="table table-sm align-middle">
+                            <thead><tr><th>Task</th><th>Status</th><th>Last run</th><th>Result</th><th>Next run</th></tr></thead>
+                            <tbody id="tasks-body"></tbody>
+                        </table></div>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-health">
+                        <div id="health-body"></div>
                     </div>
                     <div class="tab-pane fade" id="discovery-changes">
                         <table class="table table-sm">

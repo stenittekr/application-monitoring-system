@@ -22,6 +22,7 @@ def availability_report(application_id=None, environment=None, date_from=None, d
         db.session.query(
             Application.id,
             Application.name,
+            Application.sla_target_percent,
             Application.environment,
             func.count(HealthCheck.id).label("total_checks"),
             func.sum(func.cast(HealthCheck.success, db.Integer)).label("successful_checks"),
@@ -36,7 +37,8 @@ def availability_report(application_id=None, environment=None, date_from=None, d
     if environment:
         query = query.filter(Application.environment == environment)
 
-    query = query.group_by(Application.id, Application.name, Application.environment)
+    query = query.group_by(Application.id, Application.name, Application.environment,
+                           Application.sla_target_percent)
 
     results = []
     for row in query.all():
@@ -67,6 +69,11 @@ def availability_report(application_id=None, environment=None, date_from=None, d
             "total_checks": total,
             "successful_checks": successful,
             "availability_percent": availability,
+            # Null means nobody has committed to a target. The report shows "no
+            # target" rather than inventing 99.9 and marking everyone against it.
+            "sla_target_percent": row.sla_target_percent,
+            "sla_met": (None if row.sla_target_percent is None
+                        else availability >= row.sla_target_percent),
             "avg_response_time": round(row.avg_response_time, 2) if row.avg_response_time else None,
             "incident_count": incident_count,
             "avg_downtime_seconds": round(total_downtime / incident_count, 2) if incident_count else 0,
@@ -182,7 +189,8 @@ def export_availability_csv(rows):
     buffer = io.StringIO()
     fieldnames = [
         "application_id", "application_name", "environment", "total_checks",
-        "successful_checks", "availability_percent", "avg_response_time",
+        "successful_checks", "availability_percent", "sla_target_percent", "sla_met",
+        "avg_response_time",
         "incident_count", "avg_downtime_seconds", "total_downtime_seconds",
     ]
     writer = csv.DictWriter(buffer, fieldnames=fieldnames)

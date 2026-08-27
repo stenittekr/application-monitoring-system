@@ -120,3 +120,21 @@ def set_alert_scope(server_id):
     log_activity(int(get_jwt_identity()), "SERVER_ALERT_SCOPE_CHANGED", "Server", server.id,
                  "owner only" if owner_only else "full distribution list")
     return success_response(server.to_dict())
+
+
+@bp.get("/<int:server_id>/capacity")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR", "APP_OWNER")
+def server_capacity(server_id):
+    """Disk growth rate and days until full (§8 growth trend, §19 disk fills rapidly).
+
+    Returns null when there is not enough history to say. A percentage tells you
+    a disk is 84% full; it cannot tell you whether that took two years or two
+    days, and only one of those needs doing something about this week.
+    """
+    from app.services import capacity_service
+
+    server = server_service.get_server(server_id)
+    if not server:
+        return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
+    return success_response({"server_id": server.id,
+                             "forecast": capacity_service.disk_forecast(server)})
