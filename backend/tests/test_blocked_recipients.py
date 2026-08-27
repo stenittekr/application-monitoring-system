@@ -80,22 +80,3 @@ def test_a_cc_address_already_in_to_is_not_repeated(db):
     recipients, raw = _sent(smtp)
     assert recipients == ["stenitte@awgtc.com", "m.nizar@awgtc.com", "ajoy@awgtc.com"]
     assert "Cc: ajoy@awgtc.com" in raw
-
-
-def test_the_permanent_block_holds_with_no_setting_at_all(db):
-    """People who asked to be taken off stay off, even if the setting is wiped."""
-    with patch("app.services.email_service.smtplib.SMTP") as smtp:
-        send_email("stenitte@awgtc.com", "s", "b",
-                   cc_addr="ajoy@awgtc.com, removed.one@example.com, removed.two@example.com")
-    recipients, raw = _sent(smtp)
-    assert recipients == ["stenitte@awgtc.com", "ajoy@awgtc.com"]
-    assert "removed.one" not in raw and "removed.two" not in raw
-
-
-def test_the_permanent_block_survives_the_setting_being_cleared(db):
-    db.session.add(SystemSetting(setting_key="alert_blocked_recipients", setting_value=""))
-    db.session.commit()
-    with patch("app.services.email_service.smtplib.SMTP") as smtp:
-        send_email("stenitte@awgtc.com", "s", "b", cc_addr="removed.one@example.com")
-    recipients, _ = _sent(smtp)
-    assert recipients == ["stenitte@awgtc.com"]

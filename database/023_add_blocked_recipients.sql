@@ -7,8 +7,8 @@
 -- escalation path. send_email is the single choke point every message passes
 -- through, and this is the list it checks there.
 --
--- Seeded here rather than only in the running database, so a fresh deployment
--- does not quietly start mailing people who asked to be taken off.
+-- Seeded empty: the mechanism travels with the schema, the addresses do not.
+-- Names of people taken off the alerts do not belong in source control.
 -- Run after 001-022.
 -- =========================================================
 
@@ -17,7 +17,7 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.system_settings WHERE setting_key = 'alert_blocked_recipients')
     INSERT INTO dbo.system_settings (setting_key, setting_value)
-    VALUES ('alert_blocked_recipients', 'removed.one@example.com,removed.two@example.com');
+    VALUES ('alert_blocked_recipients', '');
 GO
 
 PRINT '023_add_blocked_recipients.sql applied.';
