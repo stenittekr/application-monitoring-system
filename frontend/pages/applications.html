@@ -68,6 +68,23 @@
                                 only High and Critical alerts are sent; the rest wait for the morning digest.
                             </div>
                         </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Runs on server</label>
+                            <select class="form-select" id="app-hosted-on"><option value="">Not recorded</option></select>
+                            <div class="form-text">
+                                Its agent vouches for this application: if the agent is reaching us but the
+                                check fails, the fault is the application's.
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Network witness</label>
+                            <select class="form-select" id="app-network-witness"><option value="">None</option></select>
+                            <div class="form-text">
+                                For targets on machines we do not monitor. A server on the same network:
+                                if <em>it</em> goes quiet too, we cannot see that network and the check
+                                result proves nothing.
+                            </div>
+                        </div>
                         <div class="col-12">
                             <label class="form-label">Description</label>
                             <textarea class="form-control" id="app-description" rows="2"></textarea>

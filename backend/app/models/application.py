@@ -72,6 +72,12 @@ class Application(db.Model):
     # live agent proves the path works and a failed check is the application's
     # fault - while both being silent means we simply cannot see that host.
     hosted_on_server_id = db.Column(db.Integer, db.ForeignKey("servers.id"), nullable=True)
+    # A server whose agent proves we are still on the network this target sits
+    # on. Not the same as a host: the SQL Server at 162.20.20.250 does not run
+    # on PS_QAS, but both are reachable only from the office network, so a live
+    # heartbeat from PS_QAS is evidence that a failed database check means the
+    # database, and a silent one means we cannot see that network at all.
+    network_witness_server_id = db.Column(db.Integer, db.ForeignKey("servers.id"), nullable=True)
     baseline_notes = db.Column(db.Text, nullable=True)
 
     last_checked_at = db.Column(db.DateTime, nullable=True)
@@ -183,6 +189,7 @@ class Application(db.Model):
             "cert_issuer": self.cert_issuer,
             "workflow_steps": self.workflow_steps,
             "hosted_on_server_id": self.hosted_on_server_id,
+            "network_witness_server_id": self.network_witness_server_id,
             "cert_days_remaining": self.cert_days_remaining,
             "tracked_databases": self.tracked_databases,
             "baseline_notes": self.baseline_notes,

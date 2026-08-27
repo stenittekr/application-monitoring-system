@@ -220,3 +220,61 @@ def test_agent_down_never_reads_as_healthy(db, sample_application):
     assert host.effective_status == "AGENT_DOWN"
     assert host.effective_status != "UP"
     assert host.is_stale, "its metrics are still too old to trust"
+
+
+# --------------------------------------------------------------------------
+# A witness for targets that host nothing we monitor.
+#
+# On three consecutive evenings the laptop left the office. Every internal
+# target timed out at exactly ten seconds while every public one answered in
+# under two. Applications with a recorded host were correctly withheld; the two
+# database checks had no host - the SQL Server runs on a machine we do not
+# monitor - so they alerted as outages for systems that were running perfectly.
+# --------------------------------------------------------------------------
+
+
+def test_a_witness_stands_in_when_there_is_no_host(db, sample_application):
+    """The 26 August case: the database is fine, we simply cannot see it."""
+    witness = _host(db, minutes_since_heartbeat=600)      # office network unreachable
+    sample_application.hosted_on_server_id = None
+    sample_application.network_witness_server_id = witness.id
+    db.session.commit()
+
+    mock_send = _fail_checks(sample_application)
+
+    assert sample_application.current_status == "UNKNOWN"
+    assert Incident.query.count() == 0, "we cannot see that network, so we know nothing"
+    assert not mock_send.called
+
+
+def test_a_live_witness_still_lets_a_real_failure_alert(db, sample_application):
+    """The witness is reporting, so the network is fine and the target is not."""
+    witness = _host(db, minutes_since_heartbeat=0)
+    sample_application.hosted_on_server_id = None
+    sample_application.network_witness_server_id = witness.id
+    db.session.commit()
+
+    mock_send = _fail_checks(sample_application)
+
+    assert sample_application.current_status == "DOWN"
+    assert Incident.query.count() == 1
+    assert mock_send.called, "a genuine database outage must still alert"
+
+
+def test_the_host_wins_over_the_witness(db, sample_application):
+    """A host shares the application's fate exactly; a witness only shares its
+    network. Where both exist the host is the better evidence."""
+    host = _host(db, minutes_since_heartbeat=0)           # host reporting: path fine
+    # A distinct hostname on purpose: enroll() de-duplicates by hostname, so
+    # reusing it would silently give both roles the same server row.
+    witness, _ = server_service.enroll({"hostname": "OTHER-WITNESS", "owner_email": "ops@awgtc.com"})
+    witness.last_heartbeat_at = datetime.now(timezone.utc) - timedelta(minutes=600)
+    db.session.commit()
+    sample_application.hosted_on_server_id = host.id
+    sample_application.network_witness_server_id = witness.id
+    db.session.commit()
+
+    mock_send = _fail_checks(sample_application)
+
+    assert sample_application.current_status == "DOWN"
+    assert mock_send.called

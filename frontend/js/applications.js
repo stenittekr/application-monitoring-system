@@ -217,6 +217,26 @@
                 </tr>`).join("");
         }
 
+    // Both selects list the same enrolled servers; loaded once and reused.
+    let serverOptions = null;
+    async function fillServerSelects(app) {
+        if (serverOptions === null) {
+            try {
+                serverOptions = await api.get("/servers");
+            } catch (err) {
+                serverOptions = [];
+            }
+        }
+        [["app-hosted-on", "Not recorded", app && app.hosted_on_server_id],
+         ["app-network-witness", "None", app && app.network_witness_server_id]].forEach(([id, blank, selected]) => {
+            const select = document.getElementById(id);
+            if (!select) return;
+            select.innerHTML = `<option value="">${blank}</option>` + serverOptions
+                .map((s) => `<option value="${s.id}">${escapeHtml(s.hostname)}</option>`).join("");
+            select.value = selected ? String(selected) : "";
+        });
+    }
+
         // Fills the create/edit form with an existing app's data (or blank defaults) and opens the modal.
         function openForm(app) {
             document.getElementById("app-form-title").textContent = app ? "Edit Application" : "New Application";
@@ -240,6 +260,7 @@
             document.getElementById("app-retry-count").value = app ? app.retry_count : 3;
             document.getElementById("app-retry-delay").value = app ? app.retry_delay : 5;
             document.getElementById("app-expected-status").value = app ? app.expected_status_code : 200;
+            fillServerSelects(app);
             document.getElementById("app-criticality").value = (app && app.criticality) || "";
             document.getElementById("app-support-hours").value = (app && app.support_hours) || "";
             document.getElementById("app-monitoring-enabled").checked = app ? app.monitoring_enabled : true;
@@ -283,6 +304,8 @@
                 retry_count: Number(document.getElementById("app-retry-count").value),
                 retry_delay: Number(document.getElementById("app-retry-delay").value),
                 expected_status_code: Number(document.getElementById("app-expected-status").value),
+                hosted_on_server_id: document.getElementById("app-hosted-on").value || null,
+                network_witness_server_id: document.getElementById("app-network-witness").value || null,
                 criticality: document.getElementById("app-criticality").value || null,
                 support_hours: document.getElementById("app-support-hours").value.trim() || null,
                 monitoring_enabled: document.getElementById("app-monitoring-enabled").checked,

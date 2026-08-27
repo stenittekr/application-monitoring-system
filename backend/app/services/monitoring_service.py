@@ -373,19 +373,24 @@ CORROBORATION_STALE_INTERVALS = 3
 def host_is_reachable(application):
     """Is the application's host demonstrably in contact with us right now?
 
-    Returns True (agent heartbeating), False (agent silent), or None (no host
-    recorded, so there is nothing to corroborate with).
+    Returns True (agent heartbeating), False (agent silent), or None (nothing
+    recorded to corroborate with).
 
     An agent heartbeat is inbound over the same network path our outbound check
     uses. A live heartbeat therefore proves the path works, which makes a failed
     HTTP check the application's fault. Both failing together means the path
     itself is gone, and blaming the application would be a guess.
     """
-    if not application.hosted_on_server_id:
+    # The host first, because its agent shares the application's fate exactly.
+    # Failing that, a nominated witness on the same network - for a database on
+    # a machine we do not monitor, a server we do monitor on the same network
+    # is the only evidence available, and it is better than none.
+    server_id = application.hosted_on_server_id or application.network_witness_server_id
+    if not server_id:
         return None
     from app.models.server import Server
 
-    server = db.session.get(Server, application.hosted_on_server_id)
+    server = db.session.get(Server, server_id)
     if not server or not server.last_heartbeat_at:
         return None
     last = server.last_heartbeat_at
