@@ -50,6 +50,17 @@ def _get_smtp_config():
 
 BLOCKED_SETTING = "alert_blocked_recipients"
 
+# Addresses that must never receive alert mail, held in code rather than only in
+# a setting. People who have asked to be taken off should stay off, and a
+# setting is one careless edit away from putting them back - which already
+# happened once when a DOWN alert went out after they were removed from the
+# distribution list, because a notification carries the CC it was created with.
+# The setting below still works for anyone else; this list is the floor.
+PERMANENTLY_BLOCKED = frozenset({
+    "removed.one@example.com",
+    "removed.two@example.com",
+})
+
 
 def _addresses(value):
     """Splits a comma-separated field into individual addresses.
@@ -72,7 +83,7 @@ def _blocked():
     from app.models.system_setting import SystemSetting
 
     row = SystemSetting.query.filter_by(setting_key=BLOCKED_SETTING).first()
-    return {a.lower() for a in _addresses(row.setting_value if row else "")}
+    return PERMANENTLY_BLOCKED | {a.lower() for a in _addresses(row.setting_value if row else "")}
 
 
 def send_email(to_addr, subject, body_text, cc_addr=None):
