@@ -48,18 +48,54 @@ def _get_smtp_config():
     return cfg
 
 
+BLOCKED_SETTING = "alert_blocked_recipients"
+
+
+def _addresses(value):
+    """Splits a comma-separated field into individual addresses.
+
+    To and Cc are single strings everywhere upstream, but a header may legally
+    hold several addresses - and smtplib needs them one per envelope entry, or
+    the whole string is treated as one malformed recipient and nothing arrives.
+    """
+    return [a.strip() for a in (value or "").split(",") if a.strip()]
+
+
+def _blocked():
+    """Addresses that must never receive mail, whatever asked for it.
+
+    Removing someone from a distribution list only holds until the next thing
+    that builds a recipient from an owner field, a manager field or an
+    escalation path. This is the choke point every email passes through, so a
+    block here is the one that actually holds.
+    """
+    from app.models.system_setting import SystemSetting
+
+    row = SystemSetting.query.filter_by(setting_key=BLOCKED_SETTING).first()
+    return {a.lower() for a in _addresses(row.setting_value if row else "")}
+
+
 def send_email(to_addr, subject, body_text, cc_addr=None):
     """Sends a plain-text email. Raises EmailSendError on failure (caller decides how to record it)."""
     cfg = _get_smtp_config()
+
+    blocked = _blocked()
+    to_list = [a for a in _addresses(to_addr) if a.lower() not in blocked]
+    cc_list = [a for a in _addresses(cc_addr) if a.lower() not in blocked]
+    if not to_list:
+        # Everyone in To was blocked. Promoting a CC into To would deliver the
+        # mail the block was meant to stop, so nothing is sent.
+        raise EmailSendError("No permitted recipients remain after the block list.")
+
     msg = MIMEMultipart()
     msg["From"] = cfg["EMAIL_FROM"]
-    msg["To"] = to_addr
-    if cc_addr:
-        msg["Cc"] = cc_addr
+    msg["To"] = ", ".join(to_list)
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
     msg["Subject"] = subject
     msg.attach(MIMEText(body_text, "plain"))
 
-    recipients = [to_addr] + ([cc_addr] if cc_addr else [])
+    recipients = to_list + cc_list
 
     try:
         with smtplib.SMTP(cfg["SMTP_HOST"], cfg["SMTP_PORT"], timeout=15) as server:
