@@ -99,6 +99,13 @@ def _attempt_send(notification, body):
         # picks it up on the next working day and sends the stored body.
         logger.debug("Quiet day - holding notification #%s for the next working day.", notification.id)
         return
+    if not notification.cc:
+        # Server DOWN, server RECOVERY and ESCALATION each built their own
+        # Notification and none of them set a CC, so those three went to one
+        # person while application alerts went to the whole list. Defaulting it
+        # here rather than at each call site means the next notification type
+        # cannot forget in the same way.
+        notification.cc = _alert_cc()
     try:
         # Last line of defence before anything leaves the building.
         send_email(notification.recipient, redact(notification.subject), redact(body),

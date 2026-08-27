@@ -81,7 +81,9 @@ def send_email(to_addr, subject, body_text, cc_addr=None):
 
     blocked = _blocked()
     to_list = [a for a in _addresses(to_addr) if a.lower() not in blocked]
-    cc_list = [a for a in _addresses(cc_addr) if a.lower() not in blocked]
+    already = {a.lower() for a in to_list}
+    cc_list = [a for a in _addresses(cc_addr)
+               if a.lower() not in blocked and a.lower() not in already]
     if not to_list:
         # Everyone in To was blocked. Promoting a CC into To would deliver the
         # mail the block was meant to stop, so nothing is sent.

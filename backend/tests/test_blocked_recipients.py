@@ -70,3 +70,13 @@ def test_no_block_list_configured_changes_nothing(db):
         send_email("stenitte@awgtc.com", "s", "b", cc_addr="ajoy@awgtc.com")
     recipients, _ = _sent(smtp)
     assert recipients == ["stenitte@awgtc.com", "ajoy@awgtc.com"]
+
+
+def test_a_cc_address_already_in_to_is_not_repeated(db):
+    """Delivered either way; a name on both lines only reads as a mistake."""
+    with patch("app.services.email_service.smtplib.SMTP") as smtp:
+        send_email("stenitte@awgtc.com, m.nizar@awgtc.com", "s", "b",
+                   cc_addr="ajoy@awgtc.com, m.nizar@awgtc.com")
+    recipients, raw = _sent(smtp)
+    assert recipients == ["stenitte@awgtc.com", "m.nizar@awgtc.com", "ajoy@awgtc.com"]
+    assert "Cc: ajoy@awgtc.com" in raw
