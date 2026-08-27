@@ -26,7 +26,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.5.0"
+AGENT_VERSION = "0.6.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -420,6 +420,30 @@ def send_heartbeat(api, server_id, token, metrics):
         return False, str(exc)
 
 
+def _reload(config_path, api, server_id, token, interval):
+    """Re-reads the config each cycle so a change takes effect without a restart.
+
+    The hub address moved four times in a week; each move meant a remote session
+    as Administrator on every server just to edit one line. Reading a 3KB file
+    once a minute, next to a heartbeat that already crosses the network, costs
+    nothing worth counting.
+
+    A half-written or malformed file keeps the previous values: the agent going
+    quiet is precisely the failure this is meant to prevent.
+    """
+    try:
+        cfg = agent_config.load_config(config_path)
+        new = (cfg["api"], cfg["server_id"], cfg["token"], cfg.get("interval", 60))
+    except Exception as exc:  # noqa: BLE001 - keep running on the last good config
+        print(f"[config unreadable, keeping previous] {exc}")
+        return api, server_id, token, interval
+    if new[0] != api:
+        print(f"[config changed] hub {api} -> {new[0]}")
+    if new[3] != interval:
+        print(f"[config changed] interval {interval}s -> {new[3]}s")
+    return new
+
+
 def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG_PATH, stop_event=None):
     """Heartbeat loop: flush any queued failures, collect metrics, send,
     sleep, repeat. Runs until stop_event is set (Windows Service stop) or
@@ -427,6 +451,7 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
     queue_path = _queue_path(config_path)
     print(f"Agent {AGENT_VERSION} starting. Heartbeat every {interval}s.")
     while stop_event is None or not stop_event.is_set():
+        api, server_id, token, interval = _reload(config_path, api, server_id, token, interval)
         _flush_queue(api, token, queue_path)
 
         metrics = collect_metrics()

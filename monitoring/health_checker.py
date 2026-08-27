@@ -9,7 +9,9 @@ from app.extensions import db
 from app.models.application import Application
 from app.models.system_setting import SystemSetting
 from app.services.monitoring_service import run_health_check, apply_transition_from
-from app.services.notification_service import retry_failed_notifications, check_escalations
+from app.services import retention_service
+from app.services.notification_service import (retry_failed_notifications, check_escalations,
+                                                 send_daily_digest)
 from app.services.server_service import check_missed_heartbeats
 
 logger = logging.getLogger("monitor.health_checker")
@@ -129,10 +131,22 @@ def run_monitoring_cycle():
         logger.exception("Could not record cycle timestamp")
 
     try:
+        retention_service.purge_if_due(now)
+    except Exception:
+        db.session.rollback()
+        logger.exception("Retention purge failed")
+
+    try:
         retry_failed_notifications()
     except Exception:
         db.session.rollback()
         logger.exception("Failed while retrying pending email notifications")
+
+    try:
+        send_daily_digest(now)
+    except Exception:
+        db.session.rollback()
+        logger.exception("Could not send the daily digest")
 
     try:
         check_escalations()

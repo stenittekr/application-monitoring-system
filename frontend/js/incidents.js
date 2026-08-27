@@ -90,7 +90,7 @@
     function renderTable(incidents) {
         const tbody = document.getElementById("incidents-table-body");
         if (!incidents.length) {
-            tbody.innerHTML = `<tr><td colspan="12" class="text-center text-muted py-4">No incidents found.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="13" class="text-center text-muted py-4">No incidents found.</td></tr>`;
             return;
         }
         const appsById = Object.fromEntries(applications.map((a) => [a.id, a]));
@@ -99,6 +99,14 @@
     }
 
     // Builds the entity (application or server) name/link cell for one incident.
+    // Severity decides who hears about an incident and when, so it has to be
+    // visible - a routing rule nobody can see is indistinguishable from a bug.
+    function severityBadge(severity) {
+        if (!severity) return '<span class="text-muted">-</span>';
+        const cls = { CRITICAL: "danger", HIGH: "danger", MEDIUM: "warning", LOW: "secondary" }[severity] || "secondary";
+        return `<span class="badge bg-${cls}-subtle text-${cls}-emphasis border border-${cls}-subtle">${escapeHtml(severity)}</span>`;
+    }
+
     function entityCell(incident, app, server) {
         if (app) return `<a href="application-details.html?id=${incident.application_id}">${escapeHtml(app.name)}</a>`;
         const label = server ? server.hostname : "#" + incident.server_id;
@@ -143,6 +151,7 @@
                 <div class="col-sm-4">Detected: ${formatDateTime(incident.detected_at)}</div>
                 <div class="col-sm-4">Resolved: ${incident.resolved_at ? formatDateTime(incident.resolved_at) : "-"}</div>
                 <div class="col-sm-4">Kind: ${escapeHtml(incident.kind || "REACHABILITY")}</div>
+            <div class="col-sm-4">Severity: ${severityBadge(incident.severity)}</div>
             </div>
             ${incident.resolution_category
                 ? `<div class="small mt-2">Cause: <strong>${escapeHtml(incident.resolution_category)}</strong>
@@ -236,6 +245,7 @@
             <tr>
                 <td>${entityCell(incident, app, server)}</td>
                 <td>${escapeHtml(app ? app.environment : "-")}</td>
+                <td>${severityBadge(incident.severity)}</td>
                 <td><span class="badge ${incident.status === "OPEN" ? "bg-danger" : "bg-success"}">${incident.status}</span></td>
                 <td>${formatDateTime(incident.started_at)}</td>
                 <td>${formatDateTime(incident.detected_at)}</td>

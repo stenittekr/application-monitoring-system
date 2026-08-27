@@ -52,6 +52,22 @@
                                 <option>Production</option><option>Staging</option><option>Development</option><option>QA</option>
                             </select>
                         </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Criticality</label>
+                            <select class="form-select" id="app-criticality">
+                                <option value="">Normal</option>
+                                <option value="CRITICAL">Critical</option>
+                            </select>
+                            <div class="form-text">Critical raises every alert for this application to the top severity.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Support hours</label>
+                            <input class="form-control" id="app-support-hours" placeholder="24x7">
+                            <div class="form-text">
+                                <code>24x7</code>, or a window like <code>08:00-18:00</code>. Outside it,
+                                only High and Critical alerts are sent; the rest wait for the morning digest.
+                            </div>
+                        </div>
                         <div class="col-12">
                             <label class="form-label">Description</label>
                             <textarea class="form-control" id="app-description" rows="2"></textarea>

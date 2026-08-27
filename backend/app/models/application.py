@@ -40,6 +40,8 @@ class Application(db.Model):
     expected_status_code = db.Column(db.Integer, nullable=False, default=200)
     verify_ssl = db.Column(db.Boolean, nullable=False, default=True)
     department = db.Column(db.String(100), nullable=True)
+    criticality = db.Column(db.String(20), nullable=True)   # CRITICAL raises the alert floor
+    support_hours = db.Column(db.String(50), nullable=True)  # "08:00-18:00", or 24x7
     icon = db.Column(db.String(50), nullable=True)  # bootstrap-icons class, e.g. "bi-people"
 
     current_status = db.Column(db.String(20), nullable=False, default="UNKNOWN")
@@ -170,6 +172,8 @@ class Application(db.Model):
             "expected_status_code": self.expected_status_code,
             "verify_ssl": self.verify_ssl,
             "department": self.department,
+            "criticality": self.criticality,
+            "support_hours": self.support_hours,
             "icon": self.icon,
             "current_status": self.current_status,
             "maturity_status": self.maturity_status,

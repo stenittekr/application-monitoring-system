@@ -18,6 +18,10 @@ class Incident(db.Model):
     # can be short of disk AND unreachable; without this the two would share one
     # incident row and each would silently close the other.
     kind = db.Column(db.String(20), nullable=False, default="REACHABILITY")
+    # CRITICAL / HIGH / MEDIUM / LOW - derived when the incident is first
+    # alerted on, then kept, so a threshold change later cannot rewrite
+    # how urgent something was at the time.
+    severity = db.Column(db.String(10), nullable=True)
 
     started_at = db.Column(db.DateTime, nullable=False)
     detected_at = db.Column(db.DateTime, nullable=False)
@@ -65,6 +69,7 @@ class Incident(db.Model):
             "server_id": self.server_id,
             "status": self.status,
             "kind": self.kind,
+            "severity": self.severity,
             "resolved_by_id": self.resolved_by_id,
             "resolution_category": self.resolution_category,
             "resolution_note": self.resolution_note,

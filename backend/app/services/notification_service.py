@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import requests
 
 from app.extensions import db
+from app.services import alert_policy
 from app.models.notification import Notification
 from app.models.system_setting import SystemSetting
 from app.services.email_service import send_email, EmailSendError
@@ -92,6 +93,39 @@ def _create_and_send(incident, application, notification_type, subject, body):
     return notification
 
 
+def _entity_for(notification):
+    """The application or server an alert is about, for severity and hours."""
+    if notification.application_id:
+        from app.models.application import Application
+        return db.session.get(Application, notification.application_id)
+    if notification.server_id:
+        from app.models.server import Server
+        return db.session.get(Server, notification.server_id)
+    return None
+
+
+def _routing_for(notification):
+    """(action, why) from the alert policy. Recovery always goes out with the
+    alert it closes: telling someone it broke and never that it was fixed is
+    worse than not telling them at all."""
+    if notification.notification_type == "RECOVERY":
+        return alert_policy.EMAIL, None
+    from app.models.incident import Incident
+
+    incident = db.session.get(Incident, notification.incident_id) if notification.incident_id else None
+    if incident is None:
+        return alert_policy.EMAIL, None
+    entity = _entity_for(notification)
+    severity = incident.severity or alert_policy.severity_of(incident, entity)
+    if incident.severity != severity:
+        incident.severity = severity
+        db.session.commit()
+    override = alert_policy.recipients(severity, entity=entity)
+    if override:
+        notification.recipient = override
+    return alert_policy.route(severity, entity=entity)
+
+
 def _attempt_send(notification, body):
     """Sends the notification email, marking it SENT or FAILED and bumping retry_count on failure."""
     if _in_quiet_days():
@@ -99,6 +133,21 @@ def _attempt_send(notification, body):
         # picks it up on the next working day and sends the stored body.
         logger.debug("Quiet day - holding notification #%s for the next working day.", notification.id)
         return
+    # Severity decides whether this interrupts someone now, waits for the
+    # morning digest, or is recorded and not sent at all.
+    action, why = _routing_for(notification)
+    if action == alert_policy.NONE:
+        notification.status = "SUPPRESSED"
+        notification.error_message = why or "Routing policy: not sent."
+        db.session.commit()
+        return
+    if action == alert_policy.DIGEST:
+        notification.status = "DIGEST"
+        notification.error_message = why
+        db.session.commit()
+        logger.debug("Notification #%s held for the daily digest.", notification.id)
+        return
+
     if not notification.cc:
         # Server DOWN, server RECOVERY and ESCALATION each built their own
         # Notification and none of them set a CC, so those three went to one
@@ -360,3 +409,87 @@ def retry_failed_notifications():
             notification.retry_count += 1
             notification.error_message = redact(str(exc))
         db.session.commit()
+
+
+DIGEST_HOUR_DEFAULT = "8"
+LAST_DIGEST_SETTING = "last_digest_sent_at"
+
+
+def _digest_body(rows):
+    """One readable summary of everything held back since the last digest."""
+    lines = [f"{len(rows)} monitoring event(s) since the last digest.", ""]
+    for row in rows:
+        when = row.created_at.strftime("%d %b %H:%M") if row.created_at else "unknown time"
+        lines.append(f"- {when}  [{row.notification_type}]  {row.subject}")
+    lines += [
+        "",
+        "These were not sent individually because their severity routes to the digest.",
+        "Anything urgent was emailed at the time it happened.",
+        "",
+        "Open the dashboard for current status; some of these may already be resolved.",
+    ]
+    return "\n".join(lines)
+
+
+def send_daily_digest(now=None):
+    """Sends one summary of everything held for the digest. Returns the count sent.
+
+    Called every cycle; sends at most once a day, at the configured hour. A
+    digest is the answer to alerts that are worth recording and not worth
+    interrupting anyone for - a disk creeping past a warning line is real, but
+    it is not a 3am fact.
+    """
+    now = now or datetime.now(timezone.utc)
+    if _in_quiet_days():
+        return 0
+
+    try:
+        hour = int(_get_setting("digest_hour", DIGEST_HOUR_DEFAULT))
+    except ValueError:
+        hour = int(DIGEST_HOUR_DEFAULT)
+    local_now = now.astimezone()
+    if local_now.hour < hour:
+        return 0
+
+    last = _get_setting(LAST_DIGEST_SETTING)
+    if last:
+        try:
+            previous = datetime.fromisoformat(last)
+            previous = previous if previous.tzinfo else previous.replace(tzinfo=timezone.utc)
+            if previous.astimezone().date() == local_now.date():
+                return 0  # already sent today
+        except ValueError:
+            pass
+
+    rows = Notification.query.filter_by(status="DIGEST").order_by(Notification.created_at.asc()).all()
+    _stamp_digest(now)
+    if not rows:
+        return 0  # nothing held back is not worth an email saying so
+
+    # No Notification row of its own: a digest is about many incidents and the
+    # table requires one, and every row it covers already records that it was
+    # sent. Inventing a parent incident to satisfy a column would put a
+    # misleading entry in that incident's history.
+    body = _digest_body(rows)
+    subject = f"[MONITORING DIGEST] {len(rows)} event(s) - {local_now:%d %b %Y}"
+    try:
+        send_email(rows[0].recipient, subject, body, cc_addr=_alert_cc())
+    except EmailSendError as exc:
+        # Left as DIGEST so the next run picks them up rather than losing them.
+        logger.warning("Daily digest could not be sent: %s", redact(str(exc)))
+        return 0
+    for row in rows:
+        row.status = "SENT"
+        row.sent_at = now
+    db.session.commit()
+    logger.info("Daily digest sent covering %d event(s).", len(rows))
+    return len(rows)
+
+
+def _stamp_digest(now):
+    row = SystemSetting.query.filter_by(setting_key=LAST_DIGEST_SETTING).first()
+    if row:
+        row.setting_value = now.isoformat()
+    else:
+        db.session.add(SystemSetting(setting_key=LAST_DIGEST_SETTING, setting_value=now.isoformat()))
+    db.session.commit()

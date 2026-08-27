@@ -240,6 +240,8 @@
             document.getElementById("app-retry-count").value = app ? app.retry_count : 3;
             document.getElementById("app-retry-delay").value = app ? app.retry_delay : 5;
             document.getElementById("app-expected-status").value = app ? app.expected_status_code : 200;
+            document.getElementById("app-criticality").value = (app && app.criticality) || "";
+            document.getElementById("app-support-hours").value = (app && app.support_hours) || "";
             document.getElementById("app-monitoring-enabled").checked = app ? app.monitoring_enabled : true;
             document.getElementById("app-verify-ssl").checked = app ? app.verify_ssl !== false : true;
             document.getElementById("app-maturity-status").value = app ? app.maturity_status : "MONITORED";
@@ -281,6 +283,8 @@
                 retry_count: Number(document.getElementById("app-retry-count").value),
                 retry_delay: Number(document.getElementById("app-retry-delay").value),
                 expected_status_code: Number(document.getElementById("app-expected-status").value),
+                criticality: document.getElementById("app-criticality").value || null,
+                support_hours: document.getElementById("app-support-hours").value.trim() || null,
                 monitoring_enabled: document.getElementById("app-monitoring-enabled").checked,
                 verify_ssl: document.getElementById("app-verify-ssl").checked,
                 maturity_status: document.getElementById("app-maturity-status").value,
