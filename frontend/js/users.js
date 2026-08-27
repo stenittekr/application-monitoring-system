@@ -15,14 +15,25 @@
     load();
 
     // Fetches all users and renders the table.
+    // Disabled accounts are kept forever - they are referenced by audit records
+    // and incident acknowledgements, and §18 requires those stay intact. But a
+    // list of ten accounts where one is a person is not a useful list, so they
+    // are hidden until asked for rather than deleted.
     async function load() {
         try {
             const users = await api.get("/users");
-            renderTable(users);
+            const showDisabled = document.getElementById("show-disabled").checked;
+            const visible = showDisabled ? users : users.filter((u) => u.is_active);
+            renderTable(visible);
+            const hidden = users.length - visible.length;
+            document.getElementById("disabled-count").textContent =
+                hidden ? `${hidden} disabled account${hidden === 1 ? "" : "s"} hidden` : "";
         } catch (err) {
             showError(err);
         }
     }
+
+    document.getElementById("show-disabled").addEventListener("change", load);
 
     // Builds the edit/enable-disable action buttons for one user row (ADMIN only).
     function actionCell(u) {
