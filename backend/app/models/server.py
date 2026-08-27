@@ -29,6 +29,8 @@ class Server(db.Model):
     # spikes on wake, missed heartbeats when it goes home - and none of that is
     # a manager's problem. Alerts about it go to its owner and no further.
     owner_only_alerts = db.Column(db.Boolean, nullable=False, default=False)
+    site = db.Column(db.String(100), nullable=True)          # FR-023 grouping
+    tags_json = db.Column(db.Text, nullable=True)
 
     cpu_percent = db.Column(db.Float, nullable=True)
     ram_percent = db.Column(db.Float, nullable=True)
@@ -71,6 +73,16 @@ class Server(db.Model):
     discovered_processes_json = db.Column(db.Text, nullable=True)
     # Installed-software inventory, as Programs and Features lists it.
     discovered_programs_json = db.Column(db.Text, nullable=True)
+    network_interfaces_json = db.Column(db.Text, nullable=True)
+    cpu_per_core_json = db.Column(db.Text, nullable=True)
+    hardware_json = db.Column(db.Text, nullable=True)
+    disk_volumes_json = db.Column(db.Text, nullable=True)
+    scheduled_tasks_json = db.Column(db.Text, nullable=True)
+    containers_json = db.Column(db.Text, nullable=True)
+    # Positive means the agent's clock is ahead of ours. Kept as a number
+    # rather than a flag: "42 seconds" is a shrug, "3 hours" explains why an
+    # incident timeline reads backwards.
+    clock_skew_seconds = db.Column(db.Integer, nullable=True)
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(
@@ -106,6 +118,51 @@ class Server(db.Model):
         if self.current_status in ("DOWN", "UNKNOWN", "AGENT_DOWN"):
             return self.current_status
         return "STALE" if self.is_stale else self.current_status
+
+    # How far out an agent's clock may be before its timestamps stop being
+    # usable for ordering. Generous: a couple of minutes of drift is normal on
+    # a machine that has not synchronised recently and misleads nobody.
+    CLOCK_SKEW_TOLERANCE_SECONDS = 120
+
+    @property
+    def clock_is_trustworthy(self):
+        """False when this agent's timestamps should not be used for ordering."""
+        if self.clock_skew_seconds is None:
+            return True          # never reported; nothing to distrust yet
+        return abs(self.clock_skew_seconds) <= self.CLOCK_SKEW_TOLERANCE_SECONDS
+
+    @property
+    def hardware(self):
+        """Temperature, fan and battery, where the machine exposes them.
+
+        An empty dict means the OS reports none of it, which §8 requires be
+        shown as "Not available" rather than as a healthy zero.
+        """
+        return json.loads(self.hardware_json) if self.hardware_json else {}
+
+    @property
+    def disk_volumes(self):
+        return json.loads(self.disk_volumes_json) if self.disk_volumes_json else []
+
+    @property
+    def network_interfaces(self):
+        return json.loads(self.network_interfaces_json) if self.network_interfaces_json else []
+
+    @property
+    def scheduled_tasks(self):
+        return json.loads(self.scheduled_tasks_json) if self.scheduled_tasks_json else []
+
+    @property
+    def containers(self):
+        return json.loads(self.containers_json) if self.containers_json else []
+
+    @property
+    def cpu_per_core(self):
+        return json.loads(self.cpu_per_core_json) if self.cpu_per_core_json else []
+
+    @property
+    def tags(self):
+        return json.loads(self.tags_json) if self.tags_json else []
 
     @property
     def ip_addresses(self):
@@ -174,6 +231,8 @@ class Server(db.Model):
             "owner_name": self.owner_name,
             "owner_email": self.owner_email,
             "owner_only_alerts": self.owner_only_alerts,
+            "site": self.site,
+            "tags": self.tags,
             "heartbeat_interval_seconds": self.heartbeat_interval_seconds,
             "current_status": self.effective_status,
             "reported_status": self.current_status,
@@ -198,6 +257,14 @@ class Server(db.Model):
             "domain": self.domain,
             "cpu_model": self.cpu_model,
             "ip_addresses": self.ip_addresses,
+            "network_interfaces": self.network_interfaces,
+            "cpu_per_core": self.cpu_per_core,
+            "hardware": self.hardware,
+            "disk_volumes": self.disk_volumes,
+            "scheduled_tasks": self.scheduled_tasks,
+            "containers": self.containers,
+            "clock_skew_seconds": self.clock_skew_seconds,
+            "clock_is_trustworthy": self.clock_is_trustworthy,
             "expected_services": self.expected_services,
             "expected_processes": self.expected_processes,
             "component_status": self.component_status,

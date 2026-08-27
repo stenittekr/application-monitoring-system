@@ -454,6 +454,32 @@ def run_health_check(application, apply_transition=True):
     return final_health_check
 
 
+def failed_dependency(application):
+    """A dependency of this application that is itself down, or None.
+
+    §13 asks that a confirmed parent failure suppress the child symptoms, and
+    §19 that a dependency outage not produce a separate alert per application
+    that uses it. When a database dies, every application on it fails within a
+    minute or two, and the second, third and fourth emails carry no information
+    the first did not - they only make the real cause harder to find.
+
+    Only an application with an open incident of its own counts as down. A
+    dependency merely looking unhealthy is not evidence enough to withhold an
+    alert about something else.
+    """
+    dependency_ids = [i for i in (application.depends_on or []) if i != application.id]
+    if not dependency_ids:
+        return None
+    from app.models.application import Application
+
+    for dependency in Application.query.filter(
+            Application.deleted_at.is_(None),
+            Application.id.in_(dependency_ids)).all():
+        if incident_service.get_active_incident(application_id=dependency.id):
+            return dependency
+    return None
+
+
 def _apply_transition(application, result, checked_at):
     application.current_status = result["status"]
     application.last_checked_at = checked_at
@@ -501,6 +527,17 @@ def _apply_transition(application, result, checked_at):
                 "recording UNKNOWN rather than DOWN. This looks like a network path "
                 "problem between the monitor and that host, not an application fault.",
                 application.name, application.hosted_on_server_id)
+            return
+
+        # Before opening one of our own, check whether something this
+        # application depends on has already failed. If so this is a symptom,
+        # and the alert for the cause has already gone out.
+        upstream = failed_dependency(application)
+        if upstream and not incident:
+            application.current_status = "DOWN"
+            db.session.commit()
+            logger.info("Application %s is failing because %s is down - recording the outage "
+                        "but not alerting separately.", application.name, upstream.name)
             return
 
         if incident:

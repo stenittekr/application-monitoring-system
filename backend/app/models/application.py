@@ -41,6 +41,12 @@ class Application(db.Model):
     verify_ssl = db.Column(db.Boolean, nullable=False, default=True)
     department = db.Column(db.String(100), nullable=True)
     criticality = db.Column(db.String(20), nullable=True)   # CRITICAL raises the alert floor
+    # The availability this application is expected to meet, as a percentage.
+    # Null means nobody has committed to one, which reports must show as
+    # "no target" rather than inventing 99.9 and marking everyone against it.
+    sla_target_percent = db.Column(db.Float, nullable=True)
+    site = db.Column(db.String(100), nullable=True)          # FR-023 grouping
+    tags_json = db.Column(db.Text, nullable=True)
     support_hours = db.Column(db.String(50), nullable=True)  # "08:00-18:00", or 24x7
     icon = db.Column(db.String(50), nullable=True)  # bootstrap-icons class, e.g. "bi-people"
 
@@ -98,6 +104,11 @@ class Application(db.Model):
     incidents = db.relationship(
         "Incident", backref="application", lazy="dynamic", cascade="all, delete-orphan"
     )
+
+    @property
+    def tags(self):
+        """Free-form labels for grouping and filtering (FR-023)."""
+        return json.loads(self.tags_json) if self.tags_json else []
 
     @property
     def tracked_databases(self):
@@ -179,6 +190,9 @@ class Application(db.Model):
             "verify_ssl": self.verify_ssl,
             "department": self.department,
             "criticality": self.criticality,
+            "sla_target_percent": self.sla_target_percent,
+            "site": self.site,
+            "tags": self.tags,
             "support_hours": self.support_hours,
             "icon": self.icon,
             "current_status": self.current_status,

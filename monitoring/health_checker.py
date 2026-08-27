@@ -9,7 +9,7 @@ from app.extensions import db
 from app.models.application import Application
 from app.models.system_setting import SystemSetting
 from app.services.monitoring_service import run_health_check, apply_transition_from
-from app.services import retention_service
+from app.services import capacity_service, retention_service
 from app.services.notification_service import (retry_failed_notifications, check_escalations,
                                                  send_daily_digest)
 from app.services.server_service import check_missed_heartbeats
@@ -129,6 +129,13 @@ def run_monitoring_cycle():
     except Exception:
         db.session.rollback()
         logger.exception("Could not record cycle timestamp")
+
+    try:
+        for server in list_servers():
+            capacity_service.record_disk_reading(server, now)
+    except Exception:
+        db.session.rollback()
+        logger.exception("Could not record capacity readings")
 
     try:
         retention_service.purge_if_due(now)

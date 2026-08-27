@@ -112,6 +112,34 @@ def list_servers():
     return Server.query.filter(Server.deleted_at.is_(None)).order_by(Server.hostname.asc()).all()
 
 
+def _record_clock_skew(server, agent_time):
+    """Compares the agent's own clock with ours (§19 "clock incorrect").
+
+    Every timestamp the platform stores is its own, precisely so that a wrong
+    clock on a monitored machine cannot reorder an incident timeline. But a
+    badly wrong clock is worth knowing about in its own right: it breaks the
+    agent's log correlation, its certificate validation, and often its Kerberos
+    tickets, none of which this platform would otherwise notice.
+    """
+    if not agent_time:
+        server.clock_skew_seconds = None
+        return
+    try:
+        reported = datetime.fromisoformat(str(agent_time))
+    except (TypeError, ValueError):
+        server.clock_skew_seconds = None
+        return
+    if reported.tzinfo is None:
+        reported = reported.replace(tzinfo=timezone.utc)
+
+    skew = int((reported - datetime.now(timezone.utc)).total_seconds())
+    was_trustworthy = server.clock_is_trustworthy
+    server.clock_skew_seconds = skew
+    if was_trustworthy and not server.clock_is_trustworthy:
+        logger.warning("Server %s clock is %d seconds out - its own logs and any "
+                       "certificate checks it makes will be affected.", server.hostname, skew)
+
+
 def record_heartbeat(server, data):
     """Updates a server's live metrics and resolves any open incident, since a
     heartbeat arriving at all means the server is reachable right now."""
@@ -152,6 +180,15 @@ def record_heartbeat(server, data):
         server.discovered_processes_json = json.dumps(data["discovered_processes"])
     if data.get("discovered_programs") is not None:
         server.discovered_programs_json = json.dumps(data["discovered_programs"])
+    for field, column in (("network_interfaces", "network_interfaces_json"),
+                          ("cpu_per_core", "cpu_per_core_json"),
+                          ("hardware", "hardware_json"),
+                          ("disk_volumes", "disk_volumes_json"),
+                          ("scheduled_tasks", "scheduled_tasks_json"),
+                          ("containers", "containers_json")):
+        if data.get(field) is not None:
+            setattr(server, column, json.dumps(data[field]))
+    _record_clock_skew(server, data.get("agent_time"))
     server.last_heartbeat_at = datetime.now(timezone.utc)
     server.current_status = "UP"
     db.session.commit()

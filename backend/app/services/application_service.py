@@ -11,7 +11,7 @@ APPLICATION_FIELDS = (
     "owner_name", "owner_email", "manager_name", "manager_email",
     "monitoring_enabled", "monitoring_interval", "timeout",
     "retry_count", "retry_delay", "expected_status_code", "verify_ssl",
-    "department", "icon", "baseline_notes", "criticality", "support_hours", "hosted_on_server_id", "network_witness_server_id",
+    "department", "icon", "baseline_notes", "criticality", "support_hours", "hosted_on_server_id", "network_witness_server_id", "sla_target_percent", "site",
 )
 
 

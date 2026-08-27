@@ -9,8 +9,10 @@ from app.models.maintenance_window import MaintenanceWindow
 from app.models.server_change import ServerChange
 from app.models.incident_note import IncidentNote
 from app.models.server import Server
+from app.models.server_metric import ServerMetric
 
 __all__ = [
+    "ServerMetric",
     "User",
     "Application",
     "HealthCheck",

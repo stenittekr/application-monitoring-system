@@ -14,10 +14,13 @@ Usage (dev/manual):
       -> bypasses the config file entirely, for quick one-off testing
 """
 import argparse
+import csv
+import io
 import json
 import os
 import platform
 import socket
+import subprocess
 import time
 from datetime import datetime, timezone
 
@@ -26,7 +29,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.6.0"
+AGENT_VERSION = "0.7.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -295,6 +298,167 @@ def _discover_ports():
     return ports
 
 
+# --- FR-008: network, per-core and hardware -------------------------------
+
+def _network_counters():
+    """Interface state and cumulative traffic, errors and drops.
+
+    Counters are cumulative since boot, not rates. The platform turns them into
+    rates by differencing consecutive heartbeats, which is the only place that
+    knows how far apart they were - the agent would have to keep state it does
+    not otherwise need and would lose on every restart.
+    """
+    stats = psutil.net_if_stats()
+    counters = psutil.net_io_counters(pernic=True)
+    interfaces = []
+    for name, stat in stats.items():
+        if name.lower().startswith(("loopback", "lo")):
+            continue
+        io = counters.get(name)
+        interfaces.append({
+            "name": name,
+            "up": bool(stat.isup),
+            "speed_mbps": stat.speed or None,      # 0 means "not reported"
+            "bytes_sent": getattr(io, "bytes_sent", None),
+            "bytes_recv": getattr(io, "bytes_recv", None),
+            "errors": (getattr(io, "errin", 0) + getattr(io, "errout", 0)) if io else None,
+            "drops": (getattr(io, "dropin", 0) + getattr(io, "dropout", 0)) if io else None,
+        })
+    return interfaces
+
+
+def _per_core_cpu():
+    """Utilisation per logical core.
+
+    An overall 25% across eight cores hides one core pinned at 100%, which is
+    exactly what a single-threaded process maxing out looks like from outside.
+    """
+    return psutil.cpu_percent(interval=None, percpu=True)
+
+
+def _hardware_health():
+    """Temperature, fans and battery, where the OS exposes them at all.
+
+    Section 8 is explicit that these are frequently unavailable - a virtual
+    machine exposes almost none of it - and that the platform must show
+    "Not available" rather than a comfortable zero. An absent key means
+    exactly that, which is why nothing is defaulted here.
+    """
+    health = {}
+    try:
+        temps = psutil.sensors_temperatures()
+        readings = [t.current for group in temps.values() for t in group if t.current]
+        if readings:
+            health["temperature_c"] = round(max(readings), 1)
+    except (AttributeError, OSError):
+        pass
+    try:
+        fans = psutil.sensors_fans()
+        speeds = [f.current for group in fans.values() for f in group if f.current]
+        if speeds:
+            health["fan_rpm"] = max(speeds)
+    except (AttributeError, OSError):
+        pass
+    try:
+        battery = psutil.sensors_battery()
+        if battery is not None:
+            health["battery_percent"] = round(battery.percent)
+            health["on_mains"] = bool(battery.power_plugged)
+    except (AttributeError, OSError):
+        pass
+    return health
+
+
+def _disk_volumes():
+    """Every fixed volume, not only the system drive.
+
+    A full D: stops an application just as effectively as a full C:, and the
+    system drive is often the one with room to spare.
+    """
+    volumes = []
+    for part in psutil.disk_partitions(all=False):
+        if "cdrom" in part.opts or not part.fstype:
+            continue
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+        except (PermissionError, OSError):
+            continue
+        volumes.append({
+            "mount": part.mountpoint,
+            "fstype": part.fstype,
+            "total_gb": round(usage.total / (1024 ** 3), 1),
+            "used_percent": usage.percent,
+        })
+    return volumes
+
+
+# --- FR-009: scheduled tasks and containers -------------------------------
+
+MAX_TASKS = 60
+
+
+def _discover_scheduled_tasks():
+    """Enabled scheduled tasks, with last result and next run time.
+
+    Parses the CSV output of schtasks rather than using the COM interface: it
+    needs no extra dependency, and a task list is not worth a pywin32 import
+    that could fail on a machine where everything else works.
+
+    Microsoft's own tasks are skipped. There are several hundred and nobody
+    monitors them.
+    """
+    if platform.system() != "Windows":
+        return []
+    try:
+        out = subprocess.run(["schtasks", "/query", "/fo", "csv", "/v"],
+                             capture_output=True, text=True, timeout=45)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0 or not out.stdout:
+        return []
+
+    tasks = []
+    for row in csv.DictReader(io.StringIO(out.stdout)):
+        name = (row.get("TaskName") or "").strip()
+        if not name or name.lower().startswith("\\microsoft\\"):
+            continue
+        if (row.get("Scheduled Task State") or "").strip().lower() != "enabled":
+            continue
+        tasks.append({
+            "name": name,
+            "status": (row.get("Status") or "").strip(),
+            "last_run": (row.get("Last Run Time") or "").strip(),
+            "last_result": (row.get("Last Result") or "").strip(),
+            "next_run": (row.get("Next Run Time") or "").strip(),
+        })
+        if len(tasks) >= MAX_TASKS:
+            break
+    return tasks
+
+
+def _discover_containers():
+    """Running containers, if this machine runs any.
+
+    Returns an empty list both when Docker is absent and when it is present
+    with nothing running. The platform tells those apart by whether a person
+    said this host should be running containers - not by guessing from silence.
+    """
+    try:
+        out = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}|{{.Image}}|{{.Status}}"],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return []          # no Docker on this machine
+    if out.returncode != 0:
+        return []
+    containers = []
+    for line in out.stdout.splitlines():
+        parts = line.split("|")
+        if len(parts) >= 3:
+            containers.append({"name": parts[0], "image": parts[1], "status": parts[2]})
+    return containers
+
+
 def collect_metrics():
     """Gathers the current CPU/RAM/disk/uptime/discovery snapshot - never raises,
     degrades to None/[] per field so one failing collector never blocks the rest."""
@@ -323,6 +487,16 @@ def collect_metrics():
         # ponytail: re-sent every heartbeat. Installed software changes rarely, so
         # this is redundant traffic - send only on change if payload ever matters.
         "discovered_programs": safe(_discover_programs) or [],
+        "network_interfaces": safe(_network_counters) or [],
+        "cpu_per_core": safe(_per_core_cpu) or [],
+        "hardware": safe(_hardware_health) or {},
+        "disk_volumes": safe(_disk_volumes) or [],
+        "scheduled_tasks": safe(_discover_scheduled_tasks) or [],
+        "containers": safe(_discover_containers) or [],
+        # Section 19, "clock incorrect": the agent states when it thinks it sent
+        # this, and the platform compares that with its own clock. Without it an
+        # agent with a wrong clock silently reorders an incident timeline.
+        "agent_time": datetime.now(timezone.utc).isoformat(),
     }
 
 
