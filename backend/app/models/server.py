@@ -24,6 +24,11 @@ class Server(db.Model):
 
     heartbeat_interval_seconds = db.Column(db.Integer, nullable=False, default=60)
     current_status = db.Column(db.String(20), nullable=False, default="UNKNOWN")
+    # Some machines are monitoring infrastructure rather than business systems.
+    # The laptop running the platform raised 19 of the last 27 incidents - CPU
+    # spikes on wake, missed heartbeats when it goes home - and none of that is
+    # a manager's problem. Alerts about it go to its owner and no further.
+    owner_only_alerts = db.Column(db.Boolean, nullable=False, default=False)
 
     cpu_percent = db.Column(db.Float, nullable=True)
     ram_percent = db.Column(db.Float, nullable=True)
@@ -168,6 +173,7 @@ class Server(db.Model):
             "agent_version": self.agent_version,
             "owner_name": self.owner_name,
             "owner_email": self.owner_email,
+            "owner_only_alerts": self.owner_only_alerts,
             "heartbeat_interval_seconds": self.heartbeat_interval_seconds,
             "current_status": self.effective_status,
             "reported_status": self.current_status,

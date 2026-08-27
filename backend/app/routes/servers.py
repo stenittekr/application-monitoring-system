@@ -3,7 +3,7 @@ from flask_jwt_extended import get_jwt_identity
 
 from app.auth.decorators import roles_required
 from app.services.audit_service import log_activity
-from app.extensions import limiter
+from app.extensions import db, limiter
 from app.services import server_service
 from app.utils.responses import success_response, error_response
 
@@ -95,3 +95,28 @@ def heartbeat():
 
     server_service.record_heartbeat(server, data)
     return success_response({"status": "ok", "next_heartbeat_in": server.heartbeat_interval_seconds})
+
+
+@bp.put("/<int:server_id>/alert-scope")
+@roles_required("ADMIN", "IT_MANAGER")
+def set_alert_scope(server_id):
+    """Marks a server as monitoring infrastructure, so its alerts stop at its owner.
+
+    The machine running the monitoring platform generates incidents about
+    itself - resource spikes, missed heartbeats when it is moved - which are
+    real, worth recording, and of no interest to the people who need to hear
+    about production.
+    """
+    server = server_service.get_server(server_id)
+    if not server:
+        return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
+
+    owner_only = (request.get_json(silent=True) or {}).get("owner_only_alerts")
+    if not isinstance(owner_only, bool):
+        return error_response("owner_only_alerts must be true or false.", "VALIDATION_ERROR", 422)
+
+    server.owner_only_alerts = owner_only
+    db.session.commit()
+    log_activity(int(get_jwt_identity()), "SERVER_ALERT_SCOPE_CHANGED", "Server", server.id,
+                 "owner only" if owner_only else "full distribution list")
+    return success_response(server.to_dict())

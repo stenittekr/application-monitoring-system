@@ -6,6 +6,23 @@
         return value ? `<div class="small text-muted">${label(value)}</div>` : "";
     }
 
+    // Some machines are monitoring infrastructure, not business systems. The
+    // laptop running the platform raised most of last week's incidents; those
+    // are real and worth recording, and of no use to a manager. Shown on the
+    // row rather than hidden in a modal, because who gets woken by a server is
+    // the kind of thing that should be obvious at a glance.
+    function alertScopeCell(server) {
+        const ownerOnly = !!server.owner_only_alerts;
+        const label = ownerOnly ? "Owner only" : "Full list";
+        const cls = ownerOnly ? "secondary" : "primary";
+        return `<button class="btn btn-sm btn-outline-${cls} alert-scope-toggle"
+                    data-id="${server.id}" data-owner-only="${ownerOnly}"
+                    title="${ownerOnly
+                        ? "Alerts about this server go to its owner only. Click to copy the full distribution list."
+                        : "Alerts about this server copy the full distribution list. Click to send to its owner only."}">
+                    ${label}</button>`;
+    }
+
     function ramLabel(totalMb) {
         return totalMb >= 1024 ? `of ${(totalMb / 1024).toFixed(1)} GB` : `of ${totalMb} MB`;
     }
@@ -19,6 +36,22 @@
     load();
 
     // Fetches the enrolled server list and renders the table.
+    // Flipping who hears about a server is a two-word change, so it is done in
+    // place rather than behind a form.
+    document.addEventListener("click", async (event) => {
+        const button = event.target.closest(".alert-scope-toggle");
+        if (!button) return;
+        const ownerOnly = button.dataset.ownerOnly !== "true";
+        try {
+            await api.put(`/servers/${button.dataset.id}/alert-scope`, { owner_only_alerts: ownerOnly });
+            showToast(ownerOnly ? "Alerts about this server now go to its owner only."
+                                : "Alerts about this server now copy the full list.");
+            await load();
+        } catch (err) {
+            showError(err);
+        }
+    });
+
     async function load() {
         try {
             servers = await api.get("/servers");
@@ -31,7 +64,7 @@
     function renderTable() {
         const tbody = document.getElementById("servers-table-body");
         if (!servers.length) {
-            tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">
+            tbody.innerHTML = `<tr><td colspan="11" class="text-center text-muted py-4">
                 No servers enrolled yet. Run the agent's <code>enroll</code> command to register one.</td></tr>`;
             return;
         }
@@ -46,6 +79,7 @@
                 <td>${formatPercent(s.disk_percent, s.is_stale, (s.resource_flags || {}).disk)}${capacity(s.disk_total_gb, (n) => `of ${n} GB`)}</td>
                 <td>${formatDateTime(s.last_heartbeat_at)}</td>
                 <td>${formatDateTime(s.last_boot_at)}</td>
+                <td>${alertScopeCell(s)}</td>
                 <td>
                     <button class="btn btn-sm btn-outline-secondary" data-server-id="${s.id}">
                         ${s.discovered_services.length} services, ${s.discovered_ports.length} ports, ${(s.discovered_processes || []).length} processes

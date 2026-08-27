@@ -148,7 +148,10 @@ def _attempt_send(notification, body):
         logger.debug("Notification #%s held for the daily digest.", notification.id)
         return
 
-    if not notification.cc:
+    if getattr(_entity_for(notification), "owner_only_alerts", False):
+        # Monitoring infrastructure. Its owner needs to know; nobody else does.
+        notification.cc = None
+    elif not notification.cc:
         # Server DOWN, server RECOVERY and ESCALATION each built their own
         # Notification and none of them set a CC, so those three went to one
         # person while application alerts went to the whole list. Defaulting it
