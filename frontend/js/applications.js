@@ -201,12 +201,12 @@
         function renderTable(apps, isAdmin) {
             const tbody = document.getElementById("applications-table-body");
             if (!apps.length) {
-                tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">No applications yet.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">No applications yet.</td></tr>`;
                 return;
             }
             tbody.innerHTML = apps.map((app) => `
                 <tr>
-                    <td>${escapeHtml(app.name)}</td>
+                    <td><a href="application-details.html?id=${app.id}">${escapeHtml(app.name)}</a></td>
                     <td>${escapeHtml(app.environment)}</td>
                     <td><span class="badge bg-light text-dark border me-1">${app.health_check_type}</span>${escapeHtml(targetLabel(app))}
                         <div class="small mt-1">TLS: ${certCell(app)}</div></td>
@@ -214,18 +214,6 @@
                     <td>${maturityBadge(app.maturity_status)}</td>
                     <td>${app.monitoring_enabled ? '<span class="text-success">Enabled</span>' : '<span class="text-muted">Disabled</span>'}</td>
                     <td>${formatDateTime(app.last_checked_at)}</td>
-                    <td class="btn-group btn-group-sm">
-                        <a class="btn btn-outline-primary" title="View / History" href="application-details.html?id=${app.id}"><i class="bi bi-eye"></i></a>
-                        ${isAdmin ? `
-                            <button class="btn btn-outline-secondary" title="Edit" onclick='window.__editApp(${JSON.stringify(app)})'><i class="bi bi-pencil"></i></button>
-                            <button class="btn btn-outline-secondary" title="Run Check" onclick="window.__runCheck(${app.id})"><i class="bi bi-play-circle"></i></button>
-                            <button class="btn btn-outline-secondary" title="${app.monitoring_enabled ? "Disable" : "Enable"} Monitoring"
-                                onclick="window.__toggleMonitoring(${app.id}, ${!app.monitoring_enabled})">
-                                <i class="bi ${app.monitoring_enabled ? "bi-toggle-on" : "bi-toggle-off"}"></i>
-                            </button>
-                            <button class="btn btn-outline-danger" title="Deactivate" onclick="window.__deleteApp(${app.id})"><i class="bi bi-trash"></i></button>
-                        ` : ""}
-                    </td>
                 </tr>`).join("");
         }
 
@@ -314,43 +302,6 @@
             }
         }
 
-        // Exposes openForm as the row "Edit" button handler.
-        window.__editApp = openForm;
-
-        // Triggers an immediate health check for one application (row "Run Check" button).
-        window.__runCheck = async (id) => {
-            try {
-                await api.post(`/applications/${id}/check`);
-                showToast("Health check completed.");
-                await load();
-            } catch (err) {
-                showError(err);
-            }
-        };
-
-        // Enables or disables monitoring for one application (row toggle button).
-        window.__toggleMonitoring = async (id, enable) => {
-            try {
-                await api.post(`/applications/${id}/${enable ? "enable-monitoring" : "disable-monitoring"}`);
-                showToast(`Monitoring ${enable ? "enabled" : "disabled"}.`);
-                await load();
-            } catch (err) {
-                showError(err);
-            }
-        };
-
-        // Deactivates (soft-deletes) an application after confirmation (row "Deactivate" button).
-        window.__deleteApp = async (id) => {
-            const ok = await confirmAction("Deactivate this application? It will stop being monitored.");
-            if (!ok) return;
-            try {
-                await api.del(`/applications/${id}`);
-                showToast("Application deactivated.");
-                await load();
-            } catch (err) {
-                showError(err);
-            }
-        };
     }
 
     // Sets up and drives the single-application details page (stats, info, incidents, health checks).
@@ -394,6 +345,10 @@
             const buttons = [];
             if (canEdit) buttons.push(`<button class="btn btn-outline-secondary" onclick="window.__editFromDetails()"><i class="bi bi-pencil"></i> Edit</button>`);
             if (canRunCheck) buttons.push(`<button class="btn btn-outline-secondary" onclick="window.__runCheckFromDetails(${app.id})"><i class="bi bi-play-circle"></i> Run Check</button>`);
+            // Deactivate lives here rather than on the list. It is the one
+            // irreversible action, and it should not sit a mis-click away from
+            // the row above it.
+            if (canEdit) buttons.push(`<button class="btn btn-outline-danger" onclick="window.__deactivateFromDetails(${app.id})"><i class="bi bi-trash"></i> Deactivate</button>`);
             document.getElementById("details-actions").innerHTML = buttons.join(" ");
             window.__currentApp = app;
         }
@@ -486,6 +441,18 @@
         }
 
         // Sends the user to the applications page with this app's edit modal pre-opened.
+        window.__deactivateFromDetails = async (appId) => {
+            const ok = await confirmAction("Deactivate this application? It will stop being monitored.");
+            if (!ok) return;
+            try {
+                await api.del(`/applications/${appId}`);
+                showToast("Application deactivated.");
+                window.location.href = "applications.html";
+            } catch (err) {
+                showError(err);
+            }
+        };
+
         window.__editFromDetails = () => {
             sessionStorage.setItem("amns_edit_redirect", "1");
             window.location.href = `applications.html?edit=${id}`;
