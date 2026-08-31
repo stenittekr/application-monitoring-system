@@ -7,6 +7,7 @@
     const user = getCurrentUser();
     // ADMIN/IT_MANAGER/OPERATOR act on any incident; APP_OWNER only their own (enforced server-side).
     const canAct = ["ADMIN", "IT_MANAGER", "OPERATOR", "APP_OWNER"].includes(user.role);
+    const isAdmin = user.role === "ADMIN";
     const canAssign = user.role === "ADMIN" || user.role === "IT_MANAGER"; // these roles can list users to populate the dropdown
     const canSeeServers = ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"].includes(user.role); // APP_OWNER has no server access
 
@@ -65,27 +66,68 @@
     setInterval(load, 10000); // ponytail: matches the other list pages
 
     // A quiet inbox has two meanings - nothing is wrong, or nobody is being
-    // told - and those must never look the same. If alerting is off, the page
-    // that lists incidents says so.
+    // told - and those must never look the same. The switch and its current
+    // state live together, on the page that lists what would have been sent.
     async function showAlertingBanner() {
         const host = document.getElementById("alerting-banner");
         if (!host) return;
         try {
             const status = await api.get("/settings/alerting-status");
-            if (status.alerts_enabled && !status.quiet_today) {
-                host.innerHTML = "";
-                return;
+            const on = status.alerts_enabled;
+            const tone = on ? (status.quiet_today ? "warning" : "success") : "warning";
+            const icon = on ? "bi-bell" : "bi-bell-slash";
+
+            let message;
+            if (!on) {
+                message = "<strong>Incident alert email is off.</strong> Nothing is being sent - "
+                        + "not down alerts, not recovery. Everything below is still recorded.";
+            } else if (status.quiet_today) {
+                message = "<strong>Alert email is on, but today is a quiet day</strong>, so anything "
+                        + "raised is held rather than sent.";
+            } else {
+                message = "<strong>Incident alert email is on.</strong> Alerts are being sent as "
+                        + "incidents are raised.";
             }
-            const reason = !status.alerts_enabled
-                ? "Incident alert email is switched off. Everything below is still being recorded."
-                : "Today is a quiet day, so alert email is being held rather than sent.";
-            host.innerHTML = `<div class="alert alert-warning d-flex align-items-center gap-2 py-2 mb-3">
-                    <i class="bi bi-bell-slash"></i>
-                    <div class="small">${reason}
-                        <span class="text-muted">Monitoring is unaffected.</span></div>
+
+            const control = isAdmin
+                ? `<button class="btn btn-sm btn-${on ? "outline-danger" : "success"} ms-auto flex-shrink-0"
+                       id="alerting-toggle" data-on="${on}">
+                       ${on ? "Turn alert email off" : "Turn alert email on"}</button>`
+                : "";
+
+            host.innerHTML = `<div class="alert alert-${tone} d-flex align-items-center gap-2 py-2 mb-3">
+                    <i class="bi ${icon}"></i>
+                    <div class="small">${message}
+                        <span class="text-muted d-block">Running on
+                            ${escapeHtml(status.running_on || "unknown")}. Monitoring is unaffected either way.</span>
+                    </div>
+                    ${control}
                 </div>`;
+
+            const button = document.getElementById("alerting-toggle");
+            if (button) button.addEventListener("click", () => toggleAlerting(button.dataset.on === "true"));
         } catch (err) {
             host.innerHTML = "";
+        }
+    }
+
+    // Turning it ON is the dangerous direction: on a machine that cannot see
+    // half the estate, that is a flood. Turning it off needs no ceremony.
+    async function toggleAlerting(currentlyOn) {
+        if (!currentlyOn) {
+            const ok = await confirmAction(
+                "Turn incident alert email back on?\n\n"
+                + "Anything currently failing will start alerting. If this platform is running "
+                + "somewhere that cannot reach the systems it monitors, those alerts will be wrong.");
+            if (!ok) return;
+        }
+        try {
+            await api.put("/settings/incident_alerts_enabled", { setting_value: currentlyOn ? "false" : "true" });
+            showToast(currentlyOn ? "Alert email is now off. Incidents are still recorded."
+                                  : "Alert email is now on.");
+            await showAlertingBanner();
+        } catch (err) {
+            showError(err);
         }
     }
 

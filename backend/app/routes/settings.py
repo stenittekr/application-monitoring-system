@@ -66,7 +66,13 @@ def alerting_status():
     """
     from app.services.notification_service import alerts_enabled, _in_quiet_days
 
+    import socket
+
     return success_response({
         "alerts_enabled": alerts_enabled(),
         "quiet_today": _in_quiet_days(),
+        # Which machine is deciding. Alerts sent from a laptop that leaves the
+        # network are mostly about the laptop leaving the network, and knowing
+        # where the platform is running is half of reading them correctly.
+        "running_on": socket.gethostname(),
     })
