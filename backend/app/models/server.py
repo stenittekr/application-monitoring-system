@@ -24,11 +24,16 @@ class Server(db.Model):
 
     heartbeat_interval_seconds = db.Column(db.Integer, nullable=False, default=60)
     current_status = db.Column(db.String(20), nullable=False, default="UNKNOWN")
-    # Some machines are monitoring infrastructure rather than business systems.
-    # The laptop running the platform raised 19 of the last 27 incidents - CPU
-    # spikes on wake, missed heartbeats when it goes home - and none of that is
-    # a manager's problem. Alerts about it go to its owner and no further.
-    owner_only_alerts = db.Column(db.Boolean, nullable=False, default=False)
+    # Who hears about this particular machine.
+    #
+    #   ALL    owner plus the standing distribution list
+    #   OWNER  its owner only - monitoring infrastructure, not a business system
+    #   NONE   nobody, while it is expected to misbehave
+    #
+    # The laptop running the platform raised 19 of 27 incidents in one week: CPU
+    # spikes on wake, missed heartbeats when it went home. All real, none of it
+    # a manager's problem, and some of it not worth an email at all.
+    alert_scope = db.Column(db.String(10), nullable=False, default="ALL")
     site = db.Column(db.String(100), nullable=True)          # FR-023 grouping
     tags_json = db.Column(db.Text, nullable=True)
 
@@ -130,6 +135,18 @@ class Server(db.Model):
         if self.clock_skew_seconds is None:
             return True          # never reported; nothing to distrust yet
         return abs(self.clock_skew_seconds) <= self.CLOCK_SKEW_TOLERANCE_SECONDS
+
+    ALERT_SCOPES = ("ALL", "OWNER", "NONE")
+
+    @property
+    def alerts_muted(self):
+        """True when nothing about this server should be emailed at all."""
+        return (self.alert_scope or "ALL") == "NONE"
+
+    @property
+    def owner_only_alerts(self):
+        """Whether the standing distribution list is skipped for this server."""
+        return (self.alert_scope or "ALL") == "OWNER"
 
     @property
     def fullest_volume(self):
@@ -250,7 +267,9 @@ class Server(db.Model):
             "agent_version": self.agent_version,
             "owner_name": self.owner_name,
             "owner_email": self.owner_email,
-            "owner_only_alerts": self.owner_only_alerts,
+            "alert_scope": self.alert_scope or "ALL",
+            # Kept so anything reading the old field still works.
+            "owner_only_alerts": (self.alert_scope == "OWNER"),
             "site": self.site,
             "tags": self.tags,
             "heartbeat_interval_seconds": self.heartbeat_interval_seconds,

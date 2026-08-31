@@ -23,9 +23,9 @@ def cc_list(db):
     db.session.commit()
 
 
-def _server(db, hostname, owner_only):
+def _server(db, hostname, scope):
     server, _ = server_service.enroll({"hostname": hostname, "owner_email": "stenitte@awgtc.com"})
-    server.owner_only_alerts = owner_only
+    server.alert_scope = scope
     db.session.commit()
     return server
 
@@ -46,7 +46,7 @@ def _notify(db, server):
 
 
 def test_the_monitoring_machine_does_not_copy_the_managers(db, cc_list):
-    server = _server(db, "MONITOR-LAPTOP", owner_only=True)
+    server = _server(db, "MONITOR-LAPTOP", "OWNER")
     row, mock_send = _notify(db, server)
     assert mock_send.called, "its owner still needs to know"
     assert mock_send.call_args.kwargs.get("cc_addr") in (None, ""), "and nobody else does"
@@ -54,7 +54,7 @@ def test_the_monitoring_machine_does_not_copy_the_managers(db, cc_list):
 
 
 def test_a_real_server_still_copies_everyone(db, cc_list):
-    server = _server(db, "PROD-SERVER", owner_only=False)
+    server = _server(db, "PROD-SERVER", "ALL")
     row, mock_send = _notify(db, server)
     cc = mock_send.call_args.kwargs.get("cc_addr") or ""
     assert "ajoy@awgtc.com" in cc and "raam@awgtc.com" in cc
@@ -63,7 +63,7 @@ def test_a_real_server_still_copies_everyone(db, cc_list):
 def test_the_flag_defaults_to_copying_everyone(db, cc_list):
     """A server nobody has classified must not go quiet by accident."""
     server, _ = server_service.enroll({"hostname": "NEW-SERVER", "owner_email": "stenitte@awgtc.com"})
-    assert server.owner_only_alerts is False
+    assert server.alert_scope == "ALL"
     row, mock_send = _notify(db, server)
     assert "ajoy@awgtc.com" in (mock_send.call_args.kwargs.get("cc_addr") or "")
 
@@ -129,3 +129,17 @@ def test_an_incident_opened_before_this_rule_is_closed(db):
     assert incident.status == "RESOLVED"
     assert incident.resolution_category == "False alarm - monitoring"
     assert not mock_send.called
+
+
+def test_a_server_set_to_no_email_sends_nothing(db, cc_list):
+    """Some weeks a machine is expected to misbehave and nobody needs telling."""
+    server = _server(db, "NOISY-BOX", "NONE")
+    row, mock_send = _notify(db, server)
+    assert not mock_send.called
+    assert row.status == "SUPPRESSED"
+    assert Incident.query.filter_by(server_id=server.id).count() == 1, "still recorded"
+
+
+def test_an_invalid_scope_is_rejected_rather_than_guessed(db):
+    from app.models.server import Server
+    assert "SOMETIMES" not in Server.ALERT_SCOPES

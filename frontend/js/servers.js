@@ -6,22 +6,26 @@
         return value ? `<div class="small text-muted">${label(value)}</div>` : "";
     }
 
-    // Some machines are monitoring infrastructure, not business systems. The
-    // laptop running the platform raised most of last week's incidents; those
-    // are real and worth recording, and of no use to a manager. Shown on the
-    // row rather than hidden in a modal, because who gets woken by a server is
-    // the kind of thing that should be obvious at a glance.
+    // Who hears about each machine, chosen per machine and visible at a glance.
+    // Two states were not enough: the laptop running the platform produces real
+    // incidents that are nobody's business but its owner's, and some weeks not
+    // even that.
+    const ALERT_SCOPES = [
+        ["ALL", "Everyone", "Owner plus the standing distribution list."],
+        ["OWNER", "Owner only", "Its owner is emailed; the distribution list is not."],
+        ["NONE", "No email", "Nothing is emailed. Incidents are still recorded and shown."],
+    ];
+
     function alertScopeCell(server) {
-        const ownerOnly = !!server.owner_only_alerts;
-        const label = ownerOnly ? "Owner only" : "Full list";
-        const cls = ownerOnly ? "secondary" : "primary";
-        return `<button class="btn btn-sm btn-outline-${cls} alert-scope-toggle"
-                    data-id="${server.id}" data-owner-only="${ownerOnly}"
-                    title="${ownerOnly
-                        ? "Alerts about this server go to its owner only. Click to copy the full distribution list."
-                        : "Alerts about this server copy the full distribution list. Click to send to its owner only."}">
-                    ${label}</button>`;
+        const current = server.alert_scope || "ALL";
+        const tone = { ALL: "primary", OWNER: "secondary", NONE: "warning" }[current];
+        const options = ALERT_SCOPES.map(([value, label]) =>
+            `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`).join("");
+        const help = (ALERT_SCOPES.find((o) => o[0] === current) || [])[2] || "";
+        return `<select class="form-select form-select-sm alert-scope-select border-${tone}"
+                    data-id="${server.id}" title="${help}" style="min-width:8.5rem">${options}</select>`;
     }
+
 
     function ramLabel(totalMb) {
         return totalMb >= 1024 ? `of ${(totalMb / 1024).toFixed(1)} GB` : `of ${totalMb} MB`;
@@ -36,19 +40,23 @@
     load();
 
     // Fetches the enrolled server list and renders the table.
-    // Flipping who hears about a server is a two-word change, so it is done in
-    // place rather than behind a form.
-    document.addEventListener("click", async (event) => {
-        const button = event.target.closest(".alert-scope-toggle");
-        if (!button) return;
-        const ownerOnly = button.dataset.ownerOnly !== "true";
+    // Changed in place rather than behind a form: it is one choice, and the
+    // person making it is looking at the machine it applies to.
+    document.addEventListener("change", async (event) => {
+        const select = event.target.closest(".alert-scope-select");
+        if (!select) return;
+        const scope = select.value;
         try {
-            await api.put(`/servers/${button.dataset.id}/alert-scope`, { owner_only_alerts: ownerOnly });
-            showToast(ownerOnly ? "Alerts about this server now go to its owner only."
-                                : "Alerts about this server now copy the full list.");
+            await api.put(`/servers/${select.dataset.id}/alert-scope`, { alert_scope: scope });
+            showToast({
+                ALL: "Alerts about this server now go to everyone.",
+                OWNER: "Alerts about this server now go to its owner only.",
+                NONE: "Alerts about this server will not be emailed. They are still recorded.",
+            }[scope]);
             await load();
         } catch (err) {
             showError(err);
+            await load();
         }
     });
 

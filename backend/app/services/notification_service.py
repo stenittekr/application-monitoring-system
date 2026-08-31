@@ -172,7 +172,16 @@ def _attempt_send(notification, body):
         logger.debug("Notification #%s held for the daily digest.", notification.id)
         return
 
-    if getattr(_entity_for(notification), "owner_only_alerts", False):
+    entity = _entity_for(notification)
+    if getattr(entity, "alerts_muted", False):
+        # This machine is set to send nothing. Still recorded, still on the
+        # dashboard - it simply does not reach anyone's inbox.
+        notification.status = "SUPPRESSED"
+        notification.error_message = "Alerts for this server are switched off."
+        db.session.commit()
+        return
+
+    if getattr(entity, "owner_only_alerts", False):
         # Monitoring infrastructure. Its owner needs to know; nobody else does.
         notification.cc = None
     elif not notification.cc:

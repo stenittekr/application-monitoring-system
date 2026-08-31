@@ -111,14 +111,17 @@ def set_alert_scope(server_id):
     if not server:
         return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
 
-    owner_only = (request.get_json(silent=True) or {}).get("owner_only_alerts")
-    if not isinstance(owner_only, bool):
-        return error_response("owner_only_alerts must be true or false.", "VALIDATION_ERROR", 422)
+    from app.models.server import Server
 
-    server.owner_only_alerts = owner_only
+    scope = str((request.get_json(silent=True) or {}).get("alert_scope") or "").upper()
+    if scope not in Server.ALERT_SCOPES:
+        return error_response(f"alert_scope must be one of {Server.ALERT_SCOPES}.",
+                              "VALIDATION_ERROR", 422)
+
+    server.alert_scope = scope
     db.session.commit()
     log_activity(int(get_jwt_identity()), "SERVER_ALERT_SCOPE_CHANGED", "Server", server.id,
-                 "owner only" if owner_only else "full distribution list")
+                 {"ALL": "everyone", "OWNER": "owner only", "NONE": "nobody"}[scope])
     return success_response(server.to_dict())
 
 
