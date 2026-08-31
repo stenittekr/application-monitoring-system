@@ -85,6 +85,12 @@ class Server(db.Model):
     scheduled_tasks_json = db.Column(db.Text, nullable=True)
     containers_json = db.Column(db.Text, nullable=True)
     disk_usage_json = db.Column(db.Text, nullable=True)
+    # Set the moment a restart is detected, cleared once the checks that
+    # follow one have run. §10 asks for a rapid priority check after a
+    # reboot and then the full cycle - a server that has just come back is
+    # the least trustworthy it ever is, and waiting five minutes to find
+    # out what did not come back with it is the wrong answer.
+    restart_pending_checks_at = db.Column(db.DateTime, nullable=True)
     # Positive means the agent's clock is ahead of ours. Kept as a number
     # rather than a flag: "42 seconds" is a shrug, "3 hours" explains why an
     # incident timeline reads backwards.
@@ -317,6 +323,7 @@ class Server(db.Model):
             "scheduled_tasks": self.scheduled_tasks,
             "containers": self.containers,
             "clock_skew_seconds": self.clock_skew_seconds,
+            "restart_pending_checks": self.restart_pending_checks_at is not None,
             "clock_is_trustworthy": self.clock_is_trustworthy,
             "expected_services": self.expected_services,
             "expected_processes": self.expected_processes,

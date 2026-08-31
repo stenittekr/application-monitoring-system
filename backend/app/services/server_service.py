@@ -49,6 +49,11 @@ def _detect_restart(server, uptime_seconds, now):
                 None, "SERVER_RESTART_DETECTED", "Server", server.id,
                 f"{server.hostname} restarted (uptime reset to {uptime_seconds}s).",
             )
+            # Queue the checks §10 asks for after a reboot. Recorded rather than
+            # run here: this is inside a heartbeat request, and a server that
+            # just rebooted should not have to wait for us to finish testing
+            # everything on it before its heartbeat is accepted.
+            server.restart_pending_checks_at = now
     server.last_boot_at = estimated_boot_at
 
 
@@ -567,6 +572,18 @@ def is_this_machine(server):
     platform moves to another server - the answer changes by itself.
     """
     return (server.hostname or "").strip().lower() == socket.gethostname().strip().lower()
+
+
+def servers_awaiting_restart_checks():
+    """Servers that have rebooted and not yet been re-checked."""
+    return (Server.query
+            .filter(Server.deleted_at.is_(None), Server.restart_pending_checks_at.isnot(None))
+            .all())
+
+
+def clear_restart_checks(server):
+    server.restart_pending_checks_at = None
+    db.session.commit()
 
 
 def check_missed_heartbeats(suppress_incidents=False):

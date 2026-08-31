@@ -12,7 +12,9 @@ from app.services.monitoring_service import run_health_check, apply_transition_f
 from app.services import capacity_service, retention_service
 from app.services.notification_service import (retry_failed_notifications, check_escalations,
                                                  send_daily_digest)
-from app.services.server_service import check_missed_heartbeats
+from app.services.server_service import (check_missed_heartbeats, list_servers,
+                                         servers_awaiting_restart_checks,
+                                         clear_restart_checks, evaluate_component_checks)
 
 logger = logging.getLogger("monitor.health_checker")
 
@@ -61,6 +63,39 @@ def _is_due(application, now):
     if last_checked.tzinfo is None:
         last_checked = last_checked.replace(tzinfo=timezone.utc)
     return now - last_checked >= timedelta(seconds=application.monitoring_interval)
+
+
+def _run_post_restart_checks():
+    """Checks everything on a server that has just rebooted, straight away.
+
+    §10 asks for a priority check after a restart rather than waiting for each
+    application's own interval to come round. A machine that has just come back
+    is the least trustworthy it ever is: a service set to manual does not
+    return, a mapped drive is missing, an auto-start task fails silently -
+    PS_QAS has had exactly that since 18 August and nothing said so.
+
+    This is an extra look, not a replacement for the routine one, so it does
+    not disturb each application's normal schedule.
+    """
+    for server in servers_awaiting_restart_checks():
+        applications = [a for a in Application.query.filter(
+            Application.deleted_at.is_(None),
+            Application.monitoring_enabled.is_(True),
+            Application.hosted_on_server_id == server.id).all()]
+        logger.info("Server %s restarted - priority checks on %d application(s).",
+                    server.hostname, len(applications))
+        for application in applications:
+            try:
+                run_health_check(application)
+            except Exception:
+                db.session.rollback()
+                logger.exception("Post-restart check failed for application id=%s", application.id)
+        try:
+            evaluate_component_checks(server)
+        except Exception:
+            db.session.rollback()
+            logger.exception("Post-restart component check failed for %s", server.hostname)
+        clear_restart_checks(server)
 
 
 def run_monitoring_cycle():
@@ -129,6 +164,12 @@ def run_monitoring_cycle():
     except Exception:
         db.session.rollback()
         logger.exception("Could not record cycle timestamp")
+
+    try:
+        _run_post_restart_checks()
+    except Exception:
+        db.session.rollback()
+        logger.exception("Post-restart checks failed")
 
     try:
         for server in list_servers():
