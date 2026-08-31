@@ -191,12 +191,20 @@
         const usage = server.disk_usage || [];
         const usageHtml = usage.length
             ? usage.map((vol) => {
-                const rows = (vol.folders || []).map((f) => `<tr>
-                        <td class="small"><code>${escapeHtml(f.path)}</code>${
-                            f.complete === false
-                                ? ' <span class="text-muted">(partial - scan timed out)</span>' : ""}</td>
+                const rows = (vol.folders || []).map((f) => {
+                    const partial = f.complete === false
+                        ? ' <span class="text-muted">(partial - scan timed out)</span>' : "";
+                    // The biggest folder is broken down one level, because that
+                    // is always the next question.
+                    const children = (f.children || []).map((ch) => `<tr>
+                            <td class="small ps-4 text-muted">&#8627; <code>${escapeHtml(ch.path)}</code></td>
+                            <td class="small text-end text-muted">${ch.gb} GB</td>
+                        </tr>`).join("");
+                    return `<tr>
+                        <td class="small"><code>${escapeHtml(f.path)}</code>${partial}</td>
                         <td class="small text-end" style="width:6rem">${f.gb} GB</td>
-                    </tr>`).join("");
+                    </tr>${children}`;
+                }).join("");
                 return `<div class="mb-2"><div class="small text-muted">${escapeHtml(vol.mount)}</div>
                         <table class="table table-sm mb-0"><tbody>${rows}</tbody></table></div>`;
               }).join("")

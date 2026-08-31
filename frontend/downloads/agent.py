@@ -30,7 +30,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.8.1"
+AGENT_VERSION = "0.8.2"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -539,8 +539,34 @@ def _scan_disks():
                             "gb": round(size / (1024 ** 3), 2),
                             "complete": complete})
         folders.sort(key=lambda f: f["gb"], reverse=True)
-        results.append({"mount": part.mountpoint,
-                        "folders": folders[:TOP_DIRECTORIES_PER_VOLUME]})
+        top = folders[:TOP_DIRECTORIES_PER_VOLUME]
+
+        # One level deeper into the biggest folder. "C:\Users is 80 GB" is where
+        # the question starts, not where it ends, and every attempt to answer it
+        # by hand ran for minutes and printed one line. The files were just
+        # walked, so the directory cache is warm and this is cheap.
+        if top:
+            children, _ = [], None
+            deeper_deadline = time.monotonic() + DISK_SCAN_BUDGET_SECONDS
+            try:
+                for entry in os.scandir(top[0]["path"]):
+                    if time.monotonic() > deeper_deadline:
+                        break
+                    try:
+                        if not entry.is_dir(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+                    size, complete = _directory_size(entry.path, deeper_deadline)
+                    children.append({"path": entry.path,
+                                     "gb": round(size / (1024 ** 3), 2),
+                                     "complete": complete})
+            except OSError:
+                pass
+            children.sort(key=lambda f: f["gb"], reverse=True)
+            top[0]["children"] = children[:TOP_DIRECTORIES_PER_VOLUME]
+
+        results.append({"mount": part.mountpoint, "folders": top})
         # Published as each volume finishes rather than at the end, so a slow
         # volume cannot hide a fast one that is already answered.
         with _disk_scan_lock:
