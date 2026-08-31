@@ -198,3 +198,73 @@ def export_availability_csv(rows):
     for row in rows:
         writer.writerow(row)
     return buffer.getvalue()
+
+
+def export_availability_xlsx(rows, meta=None):
+    """Renders availability rows as an Excel workbook (FR-024).
+
+    §17 requires every report to state its time range, timezone, exclusions and
+    how it was calculated. A CSV cannot carry that, so people paste the numbers
+    into a deck and the caveats are lost - which is how "99.2% available" ends
+    up in a management pack without the reader knowing that maintenance windows
+    were excluded and one application had no data for two days.
+
+    So the workbook has two sheets: the figures, and what they mean.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Availability"
+
+    headers = ["Application", "Environment", "Checks", "Successful", "Availability %",
+               "SLA target %", "SLA", "Avg response (ms)", "Incidents",
+               "Avg downtime (s)", "Total downtime (s)"]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
+
+    for row in rows:
+        target = row.get("sla_target_percent")
+        met = row.get("sla_met")
+        sheet.append([
+            row.get("application_name"),
+            row.get("environment"),
+            row.get("total_checks"),
+            row.get("successful_checks"),
+            row.get("availability_percent"),
+            target if target is not None else "no target",
+            # A dash rather than an empty cell: blank in a spreadsheet reads as
+            # "not filled in yet", and this is "there is nothing to compare against".
+            "-" if met is None else ("met" if met else "missed"),
+            row.get("avg_response_time"),
+            row.get("incident_count"),
+            row.get("avg_downtime_seconds"),
+            row.get("total_downtime_seconds"),
+        ])
+
+    for index, header in enumerate(headers, start=1):
+        width = max(len(header) + 2, 14)
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    sheet.freeze_panes = "A2"
+
+    notes = book.create_sheet("About this report")
+    for key, value in (meta or {}).items():
+        notes.append([key, str(value)])
+    notes.append(["Availability", "successful checks / total checks, over the range above"])
+    notes.append(["Downtime", "sum of resolved incident durations; open incidents are excluded"])
+    notes.append(["SLA", "compared against each application's own target; blank means none is set"])
+    notes.append(["Data gaps", "periods with no checks are not counted as available or unavailable"])
+    notes.column_dimensions["A"].width = 22
+    notes.column_dimensions["B"].width = 78
+    for cell in notes["A"]:
+        cell.font = Font(bold=True)
+
+    buffer = BytesIO()
+    book.save(buffer)
+    return buffer.getvalue()

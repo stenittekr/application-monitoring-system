@@ -336,3 +336,31 @@ a.stat-card:focus-visible { outline: 2px solid var(--amns-accent); outline-offse
 .cursor-pointer {
     cursor: pointer;
 }
+
+/* Printing a report is how it reaches a management pack, so it has to survive
+   the trip. §17 requires every report to state its range, timezone and how it
+   was calculated - on screen those sit in the filter bar, which does not print,
+   so the range is restated in the header instead. */
+@media print {
+    .sidebar, .navbar, #amns-sidebar, .btn, .no-print,
+    nav, footer, .toast-container { display: none !important; }
+
+    body { background: #fff !important; color: #000 !important; font-size: 11pt; }
+    #amns-page-content { margin: 0 !important; padding: 0 !important; }
+    .card { border: 1px solid #ccc !important; box-shadow: none !important; break-inside: avoid; }
+    .card-header { background: #fff !important; border-bottom: 1px solid #ccc !important; }
+
+    /* Tables split across pages; the header has to come with them or the
+       second page is a column of unlabelled numbers. */
+    table { font-size: 10pt; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+
+    /* Colour-only status is meaningless once printed in mono. */
+    .badge, .status-badge { border: 1px solid #666 !important; color: #000 !important;
+                            background: transparent !important; }
+
+    #print-header { display: block !important; }
+}
+
+#print-header { display: none; }

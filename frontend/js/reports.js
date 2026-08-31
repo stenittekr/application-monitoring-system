@@ -5,6 +5,8 @@
 
     document.getElementById("apply-filters-btn").addEventListener("click", load);
     document.getElementById("export-btn").addEventListener("click", exportCsv);
+    document.getElementById("export-xlsx-btn").addEventListener("click", exportXlsx);
+    document.getElementById("print-btn").addEventListener("click", printReport);
 
     init();
     // The report only reloaded on "Apply filters", so figures went stale while
@@ -134,6 +136,47 @@
     }
 
     // Downloads the current filtered report as a CSV file.
+    // Excel rather than CSV when the numbers are going into a pack: the
+    // workbook carries a second sheet saying what the figures mean, which a CSV
+    // cannot, and those caveats are exactly what gets lost on the way to a
+    // slide.
+    async function exportXlsx() {
+        try {
+            const response = await api.get(`/reports/availability/export.xlsx?${buildQuery()}`);
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "availability_report.xlsx";
+            link.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            showError(err);
+        }
+    }
+
+    // PDF via the browser's own print dialogue rather than a PDF library. It
+    // renders this page better than we would, needs no dependency, and
+    // "Save as PDF" is already in the dialogue every reader knows.
+    function printReport() {
+        // The filter bar does not print, so the range it represents is restated
+        // in the header. §17: a report that does not say what it covers is a
+        // number without a question.
+        const from = document.getElementById("filter-date-from");
+        const to = document.getElementById("filter-date-to");
+        const app = document.getElementById("filter-application");
+        const meta = document.getElementById("print-meta");
+        if (meta) {
+            meta.textContent = [
+                `Range: ${(from && from.value) || "last 30 days"} to ${(to && to.value) || "today"}`,
+                `Application: ${app && app.selectedOptions.length ? app.selectedOptions[0].text : "all"}`,
+                "Times in UTC",
+                `Generated ${new Date().toLocaleString()}`,
+            ].join("  |  ");
+        }
+        window.print();
+    }
+
     async function exportCsv() {
         try {
             const response = await api.get(`/reports/availability/export?${buildQuery()}`);
