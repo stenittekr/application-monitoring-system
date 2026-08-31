@@ -117,8 +117,8 @@ def _expand_dsn(raw):
     """Returns the DSN as a URL with its ${ENV_VAR} password resolved.
 
     The substitution happens on the parsed URL object, never on the URL text.
-    Real passwords contain URL-significant characters - "Awgt@2020" has an @
-    that ends the userinfo, "S#a#p#2024" has a # that starts a fragment - so
+    Real passwords contain URL-significant characters - "P@ssw0rd" has an @
+    that ends the userinfo, "s#ecret#24" has a # that starts a fragment - so
     expanding into the string first silently rewrites the host and the check
     times out against an address nobody meant to contact."""
     url = make_url(raw)
