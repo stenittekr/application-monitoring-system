@@ -64,6 +64,33 @@
     // Fetches incidents matching the current filters and renders the table.
     setInterval(load, 10000); // ponytail: matches the other list pages
 
+    // A quiet inbox has two meanings - nothing is wrong, or nobody is being
+    // told - and those must never look the same. If alerting is off, the page
+    // that lists incidents says so.
+    async function showAlertingBanner() {
+        const host = document.getElementById("alerting-banner");
+        if (!host) return;
+        try {
+            const status = await api.get("/settings/alerting-status");
+            if (status.alerts_enabled && !status.quiet_today) {
+                host.innerHTML = "";
+                return;
+            }
+            const reason = !status.alerts_enabled
+                ? "Incident alert email is switched off. Everything below is still being recorded."
+                : "Today is a quiet day, so alert email is being held rather than sent.";
+            host.innerHTML = `<div class="alert alert-warning d-flex align-items-center gap-2 py-2 mb-3">
+                    <i class="bi bi-bell-slash"></i>
+                    <div class="small">${reason}
+                        <span class="text-muted">Monitoring is unaffected.</span></div>
+                </div>`;
+        } catch (err) {
+            host.innerHTML = "";
+        }
+    }
+
+    showAlertingBanner();
+
     async function load() {
         const params = new URLSearchParams();
         const appId = document.getElementById("filter-application").value;
