@@ -15,6 +15,20 @@
     </div>
     <div class="row g-3 mb-4" id="stat-cards"></div>
 
+    <div class="card border-0 shadow-sm mb-4" id="dashboard-filters">
+        <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
+            <span class="small text-muted me-1"><i class="bi bi-funnel"></i> Filter</span>
+            <select class="form-select form-select-sm w-auto" id="filter-status"></select>
+            <select class="form-select form-select-sm w-auto" id="filter-environment"></select>
+            <select class="form-select form-select-sm w-auto" id="filter-criticality"></select>
+            <select class="form-select form-select-sm w-auto" id="filter-site"></select>
+            <select class="form-select form-select-sm w-auto" id="filter-owner"></select>
+            <select class="form-select form-select-sm w-auto" id="filter-tag"></select>
+            <button class="btn btn-sm btn-outline-secondary d-none" id="filter-clear">Clear</button>
+            <span class="small text-muted ms-auto" id="filter-count"></span>
+        </div>
+    </div>
+
     <div class="row g-3 mb-4" id="app-tiles"></div>
 
     <div class="card border-0 shadow-sm">

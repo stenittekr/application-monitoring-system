@@ -33,14 +33,77 @@
         });
     }
 
+    // §12.1: filter the overview by the things people actually group work by.
+    // Options are built from the data rather than hard-coded, so a filter can
+    // never offer a value nothing has - an empty result from a dropdown you
+    // were offered reads as a bug.
+    const FILTERS = [
+        ["filter-status", "All statuses", (a) => a.current_status],
+        ["filter-environment", "All environments", (a) => a.environment],
+        ["filter-criticality", "All criticalities", (a) => a.criticality || "Normal"],
+        ["filter-site", "All sites", (a) => a.site],
+        ["filter-owner", "All owners", (a) => a.owner_email],
+        ["filter-tag", "All tags", (a) => (a.tags || []).join(", ")],
+    ];
+
+    function selected(id) {
+        const el = document.getElementById(id);
+        return el && el.value ? el.value : "";
+    }
+
+    function populateFilters(apps) {
+        FILTERS.forEach(([id, blank, valueOf]) => {
+            const select = document.getElementById(id);
+            if (!select) return;
+            const keep = select.value;
+            const values = [...new Set(apps.map(valueOf).filter(Boolean))].sort();
+            select.innerHTML = `<option value="">${blank}</option>`
+                + values.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
+            select.value = values.includes(keep) ? keep : "";
+            // A filter with one possible value filters nothing.
+            select.classList.toggle("d-none", values.length < 2);
+        });
+    }
+
+    function applyFilters(apps) {
+        return apps.filter((app) =>
+            FILTERS.every(([id, , valueOf]) => {
+                const want = selected(id);
+                return !want || valueOf(app) === want;
+            }));
+    }
+
+    document.getElementById("dashboard-filters").addEventListener("change", load);
+    document.getElementById("filter-clear").addEventListener("click", () => {
+        FILTERS.forEach(([id]) => {
+            const el = document.getElementById(id);
+            if (el) el.value = "";
+        });
+        load();
+    });
+
     // Fetches applications and open incidents, then refreshes the stat cards and table.
     async function load() {
         try {
             const [allApps, incidents] = await Promise.all([api.get("/applications"), api.get("/incidents?status=OPEN")]);
             // Databases live on their own page - their connection strings are not
             // URLs and cannot be opened, so they do not belong in this table.
-            const apps = allApps.filter((a) => a.health_check_type !== "DATABASE");
-            renderStats(apps, incidents);
+            const monitored = allApps.filter((a) => a.health_check_type !== "DATABASE");
+            populateFilters(monitored);
+            const apps = applyFilters(monitored);
+
+            // The stat cards count what is on screen. A total that disagrees
+            // with the list under it is worse than no total.
+            const hidden = monitored.length - apps.length;
+            document.getElementById("filter-count").textContent =
+                hidden ? `${apps.length} of ${monitored.length} shown` : "";
+            document.getElementById("filter-clear").classList.toggle("d-none", !hidden);
+
+            const shownIds = new Set(apps.map((a) => a.id));
+            const shownIncidents = incidents.filter(
+                (i) => !i.application_id || shownIds.has(i.application_id));
+
+            renderStats(apps, shownIncidents);
             renderAppTiles(apps);
             await renderTable(apps);
         } catch (err) {
