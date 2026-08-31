@@ -265,6 +265,8 @@
                 app && app.sla_target_percent !== null && app.sla_target_percent !== undefined
                     ? app.sla_target_percent : "";
             document.getElementById("app-site").value = (app && app.site) || "";
+            document.getElementById("app-expect-contains").value = (app && app.expect_contains) || "";
+            document.getElementById("app-expect-absent").value = (app && app.expect_absent) || "";
             document.getElementById("app-criticality").value = (app && app.criticality) || "";
             document.getElementById("app-support-hours").value = (app && app.support_hours) || "";
             document.getElementById("app-monitoring-enabled").checked = app ? app.monitoring_enabled : true;
@@ -313,6 +315,8 @@
                 sla_target_percent: document.getElementById("app-sla-target").value === ""
                     ? null : Number(document.getElementById("app-sla-target").value),
                 site: document.getElementById("app-site").value.trim() || null,
+                expect_contains: document.getElementById("app-expect-contains").value.trim() || null,
+                expect_absent: document.getElementById("app-expect-absent").value.trim() || null,
                 criticality: document.getElementById("app-criticality").value || null,
                 support_hours: document.getElementById("app-support-hours").value.trim() || null,
                 monitoring_enabled: document.getElementById("app-monitoring-enabled").checked,

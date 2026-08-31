@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 DEGRADED_RESPONSE_MS = 3000  # success but slow => DEGRADED instead of UP
 
+# How much of a page to search for a content rule. A login page is a few KB;
+# anything beyond this is a report or a file download, and scanning all of it
+# every interval costs more than the answer is worth.
+MAX_BODY_INSPECTED = 200_000
+
 # Whole checks that must fail in a row before an incident is opened and anyone
 # is emailed. retry_count already retries within a single check; this requires
 # the failure to survive across separate checks, minutes apart, so a transient
@@ -319,8 +324,10 @@ def _perform_http_attempt(application):
     """Sends one HTTP request and returns a dict describing the outcome."""
     start = time.monotonic()
     try:
+        wants_body = bool(application.expect_contains or application.expect_absent)
         response = requests.get(
-            application.url, timeout=application.timeout, allow_redirects=True, verify=application.verify_ssl
+            application.url, timeout=application.timeout, allow_redirects=True,
+            verify=application.verify_ssl, stream=not wants_body,
         )
         elapsed_ms = (time.monotonic() - start) * 1000
         success = response.status_code == application.expected_status_code
@@ -335,6 +342,19 @@ def _perform_http_attempt(application):
                     f"expected {application.expected_status_code}"
                 ),
             }
+        # The status code says something answered. These say it answered with
+        # the application - not an error page, a maintenance notice, or a login
+        # screen that a signed-in journey should have passed. §1: a running
+        # process does not prove an application is usable.
+        if wants_body:
+            body = response.text[:MAX_BODY_INSPECTED].lower()
+            needle = (application.expect_contains or "").strip().lower()
+            if needle and needle not in body:
+                return _failure(start, f"page did not contain '{application.expect_contains}'")
+            forbidden = (application.expect_absent or "").strip().lower()
+            if forbidden and forbidden in body:
+                return _failure(start, f"page contained '{application.expect_absent}'")
+
         status = "DEGRADED" if elapsed_ms > DEGRADED_RESPONSE_MS else "UP"
         return {
             "success": True,

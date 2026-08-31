@@ -95,6 +95,21 @@
                                 result proves nothing.
                             </div>
                         </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Page must contain</label>
+                            <input class="form-control" id="app-expect-contains" placeholder="e.g. Sign in">
+                            <div class="form-text">
+                                A status code proves something answered. This proves it answered
+                                with the application.
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Page must NOT contain</label>
+                            <input class="form-control" id="app-expect-absent" placeholder="e.g. Service Unavailable">
+                            <div class="form-text">
+                                Catches the error page that still returns 200.
+                            </div>
+                        </div>
                         <div class="col-12">
                             <label class="form-label">Description</label>
                             <textarea class="form-control" id="app-description" rows="2"></textarea>

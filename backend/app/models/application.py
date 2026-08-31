@@ -45,6 +45,11 @@ class Application(db.Model):
     # Null means nobody has committed to one, which reports must show as
     # "no target" rather than inventing 99.9 and marking everyone against it.
     sla_target_percent = db.Column(db.Float, nullable=True)
+    # What the page must and must not say. A status code proves something
+    # answered; these prove it answered with the application rather than with an
+    # error page, a maintenance notice or a login screen it should have passed.
+    expect_contains = db.Column(db.String(300), nullable=True)
+    expect_absent = db.Column(db.String(300), nullable=True)
     site = db.Column(db.String(100), nullable=True)          # FR-023 grouping
     tags_json = db.Column(db.Text, nullable=True)
     support_hours = db.Column(db.String(50), nullable=True)  # "08:00-18:00", or 24x7
@@ -191,6 +196,8 @@ class Application(db.Model):
             "department": self.department,
             "criticality": self.criticality,
             "sla_target_percent": self.sla_target_percent,
+            "expect_contains": self.expect_contains,
+            "expect_absent": self.expect_absent,
             "site": self.site,
             "tags": self.tags,
             "support_hours": self.support_hours,
