@@ -382,6 +382,7 @@
             // Deactivate lives here rather than on the list. It is the one
             // irreversible action, and it should not sit a mis-click away from
             // the row above it.
+            if (canEdit) buttons.push(`<button class="btn btn-outline-secondary" onclick="window.__showVersions(${app.id})"><i class="bi bi-clock-history"></i> History</button>`);
             if (canEdit) buttons.push(`<button class="btn btn-outline-danger" onclick="window.__deactivateFromDetails(${app.id})"><i class="bi bi-trash"></i> Deactivate</button>`);
             document.getElementById("details-actions").innerHTML = buttons.join(" ");
             window.__currentApp = app;
@@ -475,6 +476,52 @@
         }
 
         // Sends the user to the applications page with this app's edit modal pre-opened.
+        // FR-019: what this profile used to be, and a way back to it. A
+        // rollback is a configuration change like any other, so it asks first
+        // and says exactly what it will restore.
+        window.__showVersions = async (appId) => {
+            try {
+                const versions = await api.get(`/applications/${appId}/versions`);
+                if (!versions.length) {
+                    showToast("No earlier versions - this profile has not been edited yet.");
+                    return;
+                }
+                const rows = versions.map((v) => `
+                    <tr>
+                        <td>${v.version}</td>
+                        <td class="small">${formatDateTime(v.created_at)}</td>
+                        <td class="small">${escapeHtml(v.change_note || "-")}</td>
+                        <td class="small"><code>${escapeHtml(String(v.snapshot.url || v.snapshot.server || "-")).slice(0, 46)}</code></td>
+                        <td><button class="btn btn-sm btn-outline-primary"
+                                onclick="window.__rollback(${appId}, ${v.version})">Restore</button></td>
+                    </tr>`).join("");
+                showModal("Profile history", `
+                    <p class="small text-muted">Each row is the profile as it was <em>before</em> that
+                       change. Restoring one saves the current profile first, so it can be undone.</p>
+                    <div class="table-responsive"><table class="table table-sm">
+                        <thead><tr><th>#</th><th>Saved</th><th>Note</th><th>Target</th><th></th></tr></thead>
+                        <tbody>${rows}</tbody></table></div>`);
+            } catch (err) {
+                showError(err);
+            }
+        };
+
+        window.__rollback = async (appId, version) => {
+            const ok = await confirmAction(
+                `Restore this application's profile to version ${version}?
+
+`
+                + "The current profile is saved first, so this can be undone.");
+            if (!ok) return;
+            try {
+                await api.post(`/applications/${appId}/rollback/${version}`);
+                showToast(`Restored to version ${version}.`);
+                window.location.reload();
+            } catch (err) {
+                showError(err);
+            }
+        };
+
         window.__deactivateFromDetails = async (appId) => {
             const ok = await confirmAction("Deactivate this application? It will stop being monitored.");
             if (!ok) return;

@@ -91,7 +91,7 @@ def update_application(application_id):
         return error_response("; ".join(errors), "VALIDATION_ERROR", 422)
 
     before_interval = app_row.monitoring_interval
-    application_service.update_application(app_row, data)
+    application_service.update_application(app_row, data, int(get_jwt_identity()))
     description = f"{user.name} updated application {app_row.name}."
     if "monitoring_interval" in data and int(data["monitoring_interval"]) != before_interval:
         description = (
@@ -196,3 +196,42 @@ def get_application_incidents(application_id):
         .all()
     )
     return success_response([i.to_dict() for i in incidents])
+
+
+@bp.get("/<int:application_id>/versions")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR", "APP_OWNER")
+def application_versions(application_id):
+    """Every stored version of this application's monitoring profile (FR-019)."""
+    from app.models.application_version import ApplicationVersion
+
+    app_row = application_service.get_application(application_id)
+    if not app_row:
+        return error_response("Application not found.", "APPLICATION_NOT_FOUND", 404)
+    rows = (ApplicationVersion.query
+            .filter_by(application_id=application_id)
+            .order_by(ApplicationVersion.version.desc())
+            .all())
+    return success_response([r.to_dict() for r in rows])
+
+
+@bp.post("/<int:application_id>/rollback/<int:version>")
+@roles_required("ADMIN", "IT_MANAGER")
+def rollback_application(application_id, version):
+    """Restores a previous version of the profile (FR-019, §19 configuration error).
+
+    Restricted to ADMIN and IT_MANAGER: §18 requires approval for configuration
+    changes, and a rollback is a configuration change like any other - arguably
+    the one most likely to be reached for in a hurry.
+    """
+    app_row = application_service.get_application(application_id)
+    if not app_row:
+        return error_response("Application not found.", "APPLICATION_NOT_FOUND", 404)
+
+    actor_id = int(get_jwt_identity())
+    restored, error = application_service.rollback_application(app_row, version, actor_id)
+    if error:
+        return error_response(error, "VERSION_NOT_FOUND", 404)
+
+    log_activity(actor_id, "APPLICATION_ROLLED_BACK", "Application", app_row.id,
+                 f"Restored {app_row.name} to version {version}.")
+    return success_response(restored.to_dict())

@@ -149,6 +149,32 @@ function statusBadge(status) {
     return `<span class="status-badge status-${key}"${title}>${label}</span>`;
 }
 
+/** Shows read-only HTML in a modal. For content people look at rather than answer. */
+function showModal(title, bodyHtml) {
+    let el = document.getElementById("amns-info-modal");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "amns-info-modal";
+        el.className = "modal fade";
+        el.innerHTML = `
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"></h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body"></div>
+                </div>
+            </div>`;
+        document.body.appendChild(el);
+    }
+    el.querySelector(".modal-title").textContent = title;
+    // Callers build this from data they have already escaped; it is never raw
+    // user input reaching innerHTML unchecked.
+    el.querySelector(".modal-body").innerHTML = bodyHtml;
+    new bootstrap.Modal(el).show();
+}
+
 /** Returns a Promise<boolean> resolved by the user's choice in a Bootstrap modal. */
 function confirmAction(message) {
     return new Promise((resolve) => {
