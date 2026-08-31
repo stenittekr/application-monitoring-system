@@ -84,6 +84,7 @@ class Server(db.Model):
     disk_volumes_json = db.Column(db.Text, nullable=True)
     scheduled_tasks_json = db.Column(db.Text, nullable=True)
     containers_json = db.Column(db.Text, nullable=True)
+    disk_usage_json = db.Column(db.Text, nullable=True)
     # Positive means the agent's clock is ahead of ours. Kept as a number
     # rather than a flag: "42 seconds" is a shrug, "3 hours" explains why an
     # incident timeline reads backwards.
@@ -147,6 +148,16 @@ class Server(db.Model):
     def owner_only_alerts(self):
         """Whether the standing distribution list is skipped for this server."""
         return (self.alert_scope or "ALL") == "OWNER"
+
+    @property
+    def disk_usage(self):
+        """The largest folders on each volume, as the agent last measured them.
+
+        Refreshed every six hours rather than every heartbeat: walking a 200 GB
+        volume takes minutes, and disk usage does not change meaningfully in an
+        hour. If it does, that is what the growth rate is for.
+        """
+        return json.loads(self.disk_usage_json) if self.disk_usage_json else []
 
     @property
     def fullest_volume(self):
@@ -300,6 +311,7 @@ class Server(db.Model):
             "cpu_per_core": self.cpu_per_core,
             "hardware": self.hardware,
             "disk_volumes": self.disk_volumes,
+            "disk_usage": self.disk_usage,
             "worst_disk_percent": self.worst_disk_percent,
             "fullest_volume": self.fullest_volume,
             "scheduled_tasks": self.scheduled_tasks,

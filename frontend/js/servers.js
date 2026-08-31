@@ -186,6 +186,22 @@
                  </tr>`).join("") + "</tbody></table>"
             : notAvailable("this agent does not report network counters (needs v0.7.0)");
 
+        // "88% full" is a fact nobody can act on. This is the part that says
+        // what to delete or move.
+        const usage = server.disk_usage || [];
+        const usageHtml = usage.length
+            ? usage.map((vol) => {
+                const rows = (vol.folders || []).map((f) => `<tr>
+                        <td class="small"><code>${escapeHtml(f.path)}</code>${
+                            f.complete === false
+                                ? ' <span class="text-muted">(partial - scan timed out)</span>' : ""}</td>
+                        <td class="small text-end" style="width:6rem">${f.gb} GB</td>
+                    </tr>`).join("");
+                return `<div class="mb-2"><div class="small text-muted">${escapeHtml(vol.mount)}</div>
+                        <table class="table table-sm mb-0"><tbody>${rows}</tbody></table></div>`;
+              }).join("")
+            : notAvailable("this agent does not measure folder sizes (needs v0.8.0)");
+
         const hw = server.hardware || {};
         const hwParts = [];
         if (hw.temperature_c !== undefined) hwParts.push(`Temperature ${hw.temperature_c} &deg;C`);
@@ -216,6 +232,7 @@
                 <div class="col-md-6"><h6 class="small text-uppercase text-muted">CPU per core</h6>${coresHtml}</div>
                 <div class="col-md-6"><h6 class="small text-uppercase text-muted">Volumes</h6>${volumesHtml}
                     <div id="capacity-forecast" class="small mt-2 text-muted">Checking growth rate&hellip;</div></div>
+                <div class="col-12"><h6 class="small text-uppercase text-muted">What is using the space</h6>${usageHtml}</div>
                 <div class="col-12"><h6 class="small text-uppercase text-muted">Network</h6>${nicsHtml}</div>
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Hardware</h6>${hwHtml}</div>
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Clock</h6>${clockHtml}</div>

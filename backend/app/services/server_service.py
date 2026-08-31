@@ -187,7 +187,8 @@ def record_heartbeat(server, data):
                           ("hardware", "hardware_json"),
                           ("disk_volumes", "disk_volumes_json"),
                           ("scheduled_tasks", "scheduled_tasks_json"),
-                          ("containers", "containers_json")):
+                          ("containers", "containers_json"),
+                          ("disk_usage", "disk_usage_json")):
         if data.get(field) is not None:
             setattr(server, column, json.dumps(data[field]))
     _record_clock_skew(server, data.get("agent_time"))

@@ -29,7 +29,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.7.0"
+AGENT_VERSION = "0.8.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -459,6 +459,91 @@ def _discover_containers():
     return containers
 
 
+# --- what is filling the disk (§8 storage) --------------------------------
+
+# A full walk of a 200 GB volume takes minutes. Doing it on every heartbeat
+# would make the agent the busiest thing on the server, so it runs rarely and
+# the answer is reused in between. Disk usage does not change meaningfully in
+# six hours; if it does, that is the alert, not the inventory.
+DISK_SCAN_INTERVAL_SECONDS = 6 * 3600
+
+# A hard stop, because some directory somewhere is always pathological - a
+# network mount, a deduplicated store, a folder with a million files. Partial
+# numbers beat an agent that stopped sending heartbeats while it counted.
+DISK_SCAN_BUDGET_SECONDS = 90
+
+TOP_DIRECTORIES_PER_VOLUME = 8
+
+_disk_usage_cache = {"at": 0.0, "value": []}
+
+
+def _directory_size(path, deadline):
+    """Bytes under a directory, stopping when the time budget runs out."""
+    total = 0
+    stack = [path]
+    while stack:
+        if time.monotonic() > deadline:
+            return total, False
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_symlink():
+                            continue          # never follow: junctions loop
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        else:
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue              # locked, vanished, denied
+        except OSError:
+            continue
+    return total, True
+
+
+def _largest_directories():
+    """The biggest top-level folders on each fixed volume.
+
+    Answers "what is filling this disk" without anyone logging in to look. The
+    question came up on 31 August with a volume at 88% and no way to tell what
+    was on it, which is a gap in §8 rather than an accident.
+    """
+    now = time.monotonic()
+    if _disk_usage_cache["value"] and now - _disk_usage_cache["at"] < DISK_SCAN_INTERVAL_SECONDS:
+        return _disk_usage_cache["value"]
+
+    deadline = now + DISK_SCAN_BUDGET_SECONDS
+    results = []
+    for part in psutil.disk_partitions(all=False):
+        if "cdrom" in part.opts or not part.fstype:
+            continue
+        folders = []
+        try:
+            entries = list(os.scandir(part.mountpoint))
+        except OSError:
+            continue
+        for entry in entries:
+            if time.monotonic() > deadline:
+                break
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            size, complete = _directory_size(entry.path, deadline)
+            folders.append({"path": entry.path,
+                            "gb": round(size / (1024 ** 3), 2),
+                            "complete": complete})
+        folders.sort(key=lambda f: f["gb"], reverse=True)
+        results.append({"mount": part.mountpoint,
+                        "folders": folders[:TOP_DIRECTORIES_PER_VOLUME]})
+
+    _disk_usage_cache["at"] = now
+    _disk_usage_cache["value"] = results
+    return results
+
+
 def collect_metrics():
     """Gathers the current CPU/RAM/disk/uptime/discovery snapshot - never raises,
     degrades to None/[] per field so one failing collector never blocks the rest."""
@@ -497,6 +582,7 @@ def collect_metrics():
         # this, and the platform compares that with its own clock. Without it an
         # agent with a wrong clock silently reorders an incident timeline.
         "agent_time": datetime.now(timezone.utc).isoformat(),
+        "disk_usage": safe(_largest_directories) or [],
     }
 
 
