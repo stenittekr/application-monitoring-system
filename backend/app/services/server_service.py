@@ -7,6 +7,7 @@ trusting the (possibly dead) server to report its own outage.
 import hashlib
 import json
 import logging
+import re
 import secrets
 import socket
 from datetime import datetime, timedelta, timezone
@@ -320,10 +321,25 @@ COMPONENT_CLEARS_TO_CLOSE = 2
 MAX_CHANGES_PER_CATEGORY = 40
 
 
+# Windows creates a per-user instance of some services, named with a
+# session-specific suffix: cbdhsvc_26200e2f, WpnUserService_130d63. They appear
+# and vanish with every logon, so treating them as installed services produced
+# 390 "added"/"removed" entries for services nobody installed or removed.
+_PER_USER_SERVICE = re.compile(r"_[0-9a-f]{4,}$", re.IGNORECASE)
+
+
+def _is_per_user_instance(name):
+    return bool(_PER_USER_SERVICE.search(str(name or "")))
+
+
 def _diff_snapshot(old_items, new_items, key, value_of):
     """Returns (added, removed, changed) between two discovery snapshots."""
-    old_map = {str(i.get(key)).lower(): i for i in old_items if i.get(key)}
-    new_map = {str(i.get(key)).lower(): i for i in new_items if i.get(key)}
+    def usable(item):
+        name = item.get(key)
+        return bool(name) and not _is_per_user_instance(name)
+
+    old_map = {str(i.get(key)).lower(): i for i in old_items if usable(i)}
+    new_map = {str(i.get(key)).lower(): i for i in new_items if usable(i)}
     added = [new_map[k] for k in new_map.keys() - old_map.keys()]
     removed = [old_map[k] for k in old_map.keys() - new_map.keys()]
     changed = [(old_map[k], new_map[k]) for k in old_map.keys() & new_map.keys()
@@ -331,13 +347,28 @@ def _diff_snapshot(old_items, new_items, key, value_of):
     return added, removed, changed
 
 
-def _record_changes(server, category, old_items, new_items, key, value_of):
-    """Writes ServerChange rows for one category. Silent on the first snapshot."""
+def _record_changes(server, category, old_items, new_items, key, value_of,
+                    record_value_changes=True):
+    """Writes ServerChange rows for one category. Silent on the first snapshot.
+
+    record_value_changes=False keeps additions and removals but ignores a value
+    flipping back and forth. Windows starts and stops its own on-demand services
+    constantly - WerSvc, DsmSvc, TrustedInstaller, WdiSystemHost - and recording
+    each transition as configuration drift produced 1,412 entries in nineteen
+    days, burying the ten that were real. FR-006 asks for additions, removals,
+    version changes and unexpected drift; a service doing exactly what it was
+    designed to do is none of those.
+
+    Whether a service that should be running is running is a different question,
+    answered by the component checks against the watchlist someone chose.
+    """
     from app.models.server_change import ServerChange
 
     if not old_items:
         return 0  # nothing to compare against; not a change, just a beginning
     added, removed, changed = _diff_snapshot(old_items, new_items, key, value_of)
+    if not record_value_changes:
+        changed = []
     rows = []
     for item in added[:MAX_CHANGES_PER_CATEGORY]:
         rows.append(ServerChange(server_id=server.id, category=category, change_type="ADDED",
@@ -364,7 +395,12 @@ def detect_inventory_changes(server, data):
     if data.get("discovered_services") is not None:
         total += _record_changes(
             server, "SERVICE", json.loads(server.discovered_services_json or "[]"),
-            data["discovered_services"], "name", lambda i: (i.get("status") or "")[:300])
+            data["discovered_services"], "name", lambda i: (i.get("status") or "")[:300],
+            # A service appearing or disappearing is drift worth recording. One
+            # starting and stopping is Windows working normally - whether a
+            # service that matters is running is answered by the component
+            # checks, against the watchlist someone actually chose.
+            record_value_changes=False)
     if data.get("discovered_programs") is not None:
         total += _record_changes(
             server, "PROGRAM", json.loads(server.discovered_programs_json or "[]"),

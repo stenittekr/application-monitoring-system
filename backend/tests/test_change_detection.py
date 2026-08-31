@@ -43,13 +43,41 @@ def test_a_version_upgrade_is_recorded_with_both_versions(db):
     assert change.new_value == "152.0.8000.10"
 
 
-def test_a_service_changing_state_is_recorded(db):
+def test_a_service_starting_and_stopping_is_not_configuration_drift(db):
+    """Windows starts and stops its own services constantly - WerSvc, DsmSvc,
+    TrustedInstaller. Recording each transition produced 1,412 entries in
+    nineteen days and buried the ten that mattered. FR-006 asks for additions,
+    removals and version changes; a service doing what it was designed to do is
+    none of those.
+
+    Whether a service that *should* be running is running is a different
+    question, answered by the component checks against a chosen watchlist."""
     server, _ = server_service.enroll({"hostname": "SVC-CHG"})
     _hb(server, services=[("MSSQLSERVER", "running")])
     _hb(server, services=[("MSSQLSERVER", "stopped")])
 
-    change = ServerChange.query.filter_by(category="SERVICE").one()
-    assert (change.old_value, change.new_value) == ("running", "stopped")
+    assert ServerChange.query.filter_by(category="SERVICE").count() == 0
+
+
+def test_a_service_appearing_or_disappearing_is_still_recorded(db):
+    """Installed or uninstalled is real drift, and must survive the above."""
+    server, _ = server_service.enroll({"hostname": "SVC-ADD"})
+    _hb(server, services=[("MSSQLSERVER", "running")])
+    _hb(server, services=[("MSSQLSERVER", "running"), ("NewThing", "running")])
+
+    change = ServerChange.query.filter_by(category="SERVICE", change_type="ADDED").one()
+    assert change.item_name == "NewThing"
+
+
+def test_per_user_service_instances_are_ignored(db):
+    """Windows names a per-user instance with a session suffix - cbdhsvc_26200e2f -
+    which changes at every logon. Treated as installed services they produced 390
+    additions and removals for services nobody touched."""
+    server, _ = server_service.enroll({"hostname": "PER-USER"})
+    _hb(server, services=[("cbdhsvc_26200e2f", "running")])
+    _hb(server, services=[("cbdhsvc_130d63", "running")])
+
+    assert ServerChange.query.filter_by(category="SERVICE").count() == 0
 
 
 def test_a_quiet_server_produces_no_change_noise(db):
