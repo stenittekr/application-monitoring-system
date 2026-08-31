@@ -109,7 +109,7 @@ def _routing_for(notification):
     alert it closes: telling someone it broke and never that it was fixed is
     worse than not telling them at all."""
     if notification.notification_type == "RECOVERY":
-        return alert_policy.EMAIL, None
+        return alert_policy.EMAIL, None   # still subject to alerts_enabled() above
     from app.models.incident import Incident
 
     incident = db.session.get(Incident, notification.incident_id) if notification.incident_id else None
@@ -126,8 +126,32 @@ def _routing_for(notification):
     return alert_policy.route(severity, entity=entity)
 
 
+ALERTS_ENABLED_SETTING = "incident_alerts_enabled"
+
+
+def alerts_enabled():
+    """Is the platform allowed to email about incidents at all?
+
+    A separate thing from quiet days. Quiet days *hold* mail and deliver it
+    later, which on 31 August meant a weekend of alerts arriving in one burst on
+    Monday morning - most of them about a database that was never down. This
+    switch discards instead, so turning it back on cannot produce a flood.
+
+    Incidents are still opened, recorded and shown on the dashboard. Only the
+    emailing stops.
+    """
+    return (_get_setting(ALERTS_ENABLED_SETTING, "true") or "true").strip().lower() != "false"
+
+
 def _attempt_send(notification, body):
     """Sends the notification email, marking it SENT or FAILED and bumping retry_count on failure."""
+    if not alerts_enabled():
+        # Suppressed, not held: a paused queue is a flood waiting to happen.
+        notification.status = "SUPPRESSED"
+        notification.error_message = "Incident alert email is switched off."
+        db.session.commit()
+        return
+
     if _in_quiet_days():
         # Left PENDING with retry_count untouched - retry_failed_notifications
         # picks it up on the next working day and sends the stored body.
@@ -390,6 +414,18 @@ def retry_failed_notifications():
     """Delivers everything still undelivered: FAILED notifications (up to
     MAX_NOTIFICATION_RETRIES) and PENDING ones held over a quiet day. Called each
     monitoring cycle so transient SMTP outages and weekends both self-heal."""
+    if not alerts_enabled():
+        # Anything that queued before the switch was thrown is defused here
+        # rather than left primed for whenever it is thrown back.
+        stale = Notification.query.filter(Notification.status.in_(("PENDING", "FAILED"))).all()
+        for row in stale:
+            row.status = "SUPPRESSED"
+            row.error_message = "Incident alert email is switched off."
+        if stale:
+            db.session.commit()
+            logger.info("Alert email is off - %d queued notification(s) discarded.", len(stale))
+        return
+
     if _in_quiet_days():
         return
     pending = Notification.query.filter(
