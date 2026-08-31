@@ -30,7 +30,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.8.2"
+AGENT_VERSION = "0.9.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -610,7 +610,49 @@ def _largest_directories():
         return _disk_usage_cache["value"]
 
 
-def collect_metrics():
+# --- §7.1: the agent's own health ------------------------------------------
+
+_agent_started_at = time.time()
+_agent_failed_heartbeats = 0
+
+
+def _agent_self_health(queue_path):
+    """What the agent knows about itself.
+
+    §7.1 asks it to self-monitor for crashes, queue growth, high resource use
+    and clock drift. Everything else here reports on the machine; without this
+    the one component nobody is watching is the one doing the watching, and a
+    silently degrading agent looks exactly like a healthy one right up to the
+    moment it stops.
+
+    Queue depth is the useful early signal: it grows when the platform cannot
+    be reached, so a queue that never drains means heartbeats are being kept
+    rather than delivered, even while the last one that got through looks fine.
+    """
+    health = {
+        "agent_uptime_seconds": int(time.time() - _agent_started_at),
+        "failed_heartbeats": _agent_failed_heartbeats,
+        "queued_heartbeats": 0,
+        "queue_bytes": 0,
+    }
+    try:
+        if os.path.exists(queue_path):
+            health["queue_bytes"] = os.path.getsize(queue_path)
+            health["queued_heartbeats"] = len(_load_queue(queue_path))
+    except OSError:
+        pass
+    try:
+        process = psutil.Process()
+        health["agent_memory_mb"] = round(process.memory_info().rss / (1024 ** 2), 1)
+        # Since the last call, not since boot: a lifetime average hides a spike
+        # and is close to meaningless on a long-running process.
+        health["agent_cpu_percent"] = round(process.cpu_percent(interval=None), 1)
+    except Exception:  # noqa: BLE001 - psutil raises several unrelated types here
+        pass
+    return health
+
+
+def collect_metrics(queue_path=None):
     """Gathers the current CPU/RAM/disk/uptime/discovery snapshot - never raises,
     degrades to None/[] per field so one failing collector never blocks the rest."""
     def safe(fn):
@@ -649,6 +691,7 @@ def collect_metrics():
         # agent with a wrong clock silently reorders an incident timeline.
         "agent_time": datetime.now(timezone.utc).isoformat(),
         "disk_usage": safe(_largest_directories) or [],
+        "agent_health": safe(lambda: _agent_self_health(queue_path)) if queue_path else None,
     }
 
 
@@ -780,7 +823,7 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
         api, server_id, token, interval = _reload(config_path, api, server_id, token, interval)
         _flush_queue(api, token, queue_path)
 
-        metrics = collect_metrics()
+        metrics = collect_metrics(queue_path)
         ok, message = send_heartbeat(api, server_id, token, metrics)
         if ok:
             print(f"[heartbeat OK] cpu={metrics['cpu_percent']}% ram={metrics['ram_percent']}% "
@@ -789,6 +832,8 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
                   f"processes={len(metrics['discovered_processes'])} "
                   f"programs={len(metrics['discovered_programs'])}")
         else:
+            global _agent_failed_heartbeats
+            _agent_failed_heartbeats += 1
             print(f"[heartbeat FAILED - queued, will retry next cycle] {message}")
             _queue_failed(queue_path, server_id, metrics)
 

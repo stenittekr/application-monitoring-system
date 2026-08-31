@@ -91,6 +91,7 @@ class Server(db.Model):
     # the least trustworthy it ever is, and waiting five minutes to find
     # out what did not come back with it is the wrong answer.
     restart_pending_checks_at = db.Column(db.DateTime, nullable=True)
+    agent_health_json = db.Column(db.Text, nullable=True)
     # Positive means the agent's clock is ahead of ours. Kept as a number
     # rather than a flag: "42 seconds" is a shrug, "3 hours" explains why an
     # incident timeline reads backwards.
@@ -154,6 +155,30 @@ class Server(db.Model):
     def owner_only_alerts(self):
         """Whether the standing distribution list is skipped for this server."""
         return (self.alert_scope or "ALL") == "OWNER"
+
+    # A queue this deep means heartbeats are being kept rather than delivered.
+    # Two is a blip between cycles; twenty is a pattern.
+    AGENT_QUEUE_WARNING = 10
+
+    @property
+    def agent_health(self):
+        """What the agent reports about itself (§7.1), or {} from older agents."""
+        return json.loads(self.agent_health_json) if self.agent_health_json else {}
+
+    @property
+    def agent_health_status(self):
+        """OK, WARNING, or UNAVAILABLE when the agent is too old to say.
+
+        Deliberately not CRITICAL: a struggling agent is a reason to look at the
+        agent, never a reason to declare the server down. Confusing those is how
+        a monitoring fault becomes a false outage.
+        """
+        health = self.agent_health
+        if not health:
+            return "UNAVAILABLE"
+        if health.get("queued_heartbeats", 0) >= self.AGENT_QUEUE_WARNING:
+            return "WARNING"
+        return "OK"
 
     @property
     def disk_usage(self):
@@ -324,6 +349,8 @@ class Server(db.Model):
             "containers": self.containers,
             "clock_skew_seconds": self.clock_skew_seconds,
             "restart_pending_checks": self.restart_pending_checks_at is not None,
+            "agent_health": self.agent_health,
+            "agent_health_status": self.agent_health_status,
             "clock_is_trustworthy": self.clock_is_trustworthy,
             "expected_services": self.expected_services,
             "expected_processes": self.expected_processes,

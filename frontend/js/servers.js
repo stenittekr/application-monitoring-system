@@ -221,6 +221,23 @@
             ? `<div class="small">${hwParts.join(" &middot; ")}</div>`
             : notAvailable("this machine exposes no temperature, fan or power readings");
 
+        // §7.1: the one component nobody was watching is the one doing the
+        // watching. A queue that never drains means heartbeats are being kept
+        // rather than delivered, while the last one that got through looks fine.
+        const ah = server.agent_health || {};
+        const agentHtml = server.agent_health_status === "UNAVAILABLE"
+            ? notAvailable("this agent does not report its own health (needs v0.9.0)")
+            : `<div class="small">
+                   <div>Version ${escapeHtml(server.agent_version || "?")}, up ${
+                       Math.floor((ah.agent_uptime_seconds || 0) / 3600)}h</div>
+                   <div class="${(ah.queued_heartbeats || 0) >= 10 ? "text-danger" : ""}">
+                       Queued heartbeats: ${ah.queued_heartbeats || 0}${
+                           (ah.queued_heartbeats || 0) >= 10
+                               ? " - not reaching the platform" : ""}</div>
+                   <div class="text-muted">Failed sends: ${ah.failed_heartbeats || 0} &middot;
+                       ${ah.agent_memory_mb || "?"} MB &middot; ${ah.agent_cpu_percent || 0}% CPU</div>
+               </div>`;
+
         const skew = server.clock_skew_seconds;
         const clockHtml = skew === null || skew === undefined
             ? notAvailable("this agent does not report its clock (needs v0.7.0)")
@@ -245,6 +262,7 @@
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Hardware</h6>${hwHtml}</div>
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Clock</h6>${clockHtml}</div>
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Containers</h6>${containersHtml}</div>
+                <div class="col-md-4"><h6 class="small text-uppercase text-muted">Agent</h6>${agentHtml}</div>
             </div>`;
 
         loadForecast(server.id);
