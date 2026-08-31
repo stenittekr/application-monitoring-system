@@ -21,6 +21,7 @@ import os
 import platform
 import socket
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -29,7 +30,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.8.0"
+AGENT_VERSION = "0.8.1"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -467,14 +468,22 @@ def _discover_containers():
 # six hours; if it does, that is the alert, not the inventory.
 DISK_SCAN_INTERVAL_SECONDS = 6 * 3600
 
-# A hard stop, because some directory somewhere is always pathological - a
-# network mount, a deduplicated store, a folder with a million files. Partial
-# numbers beat an agent that stopped sending heartbeats while it counted.
-DISK_SCAN_BUDGET_SECONDS = 90
+# A hard stop per volume, because some directory somewhere is always
+# pathological - a network mount, a deduplicated store, a folder with a million
+# files. Per volume rather than shared: the first scan of PS_QAS spent its whole
+# allowance on C: and never reached E: at all, which is a confident-looking
+# answer to the wrong question.
+#
+# It can afford to be generous now because the scan no longer runs inside the
+# heartbeat. At 90 seconds shared it timed out inside C:\Users and reported
+# 0.47 GB for a folder that is plainly larger.
+DISK_SCAN_BUDGET_SECONDS = 600
 
 TOP_DIRECTORIES_PER_VOLUME = 8
 
 _disk_usage_cache = {"at": 0.0, "value": []}
+_disk_scan_lock = threading.Lock()
+_disk_scan_running = False
 
 
 def _directory_size(path, deadline):
@@ -502,22 +511,16 @@ def _directory_size(path, deadline):
     return total, True
 
 
-def _largest_directories():
-    """The biggest top-level folders on each fixed volume.
-
-    Answers "what is filling this disk" without anyone logging in to look. The
-    question came up on 31 August with a volume at 88% and no way to tell what
-    was on it, which is a gap in §8 rather than an accident.
-    """
-    now = time.monotonic()
-    if _disk_usage_cache["value"] and now - _disk_usage_cache["at"] < DISK_SCAN_INTERVAL_SECONDS:
-        return _disk_usage_cache["value"]
-
-    deadline = now + DISK_SCAN_BUDGET_SECONDS
+def _scan_disks():
+    """Walks every fixed volume. Runs on a background thread; never in a heartbeat."""
     results = []
     for part in psutil.disk_partitions(all=False):
         if "cdrom" in part.opts or not part.fstype:
             continue
+        # Each volume gets the whole budget. Sharing one meant the first volume
+        # consumed it and the rest were reported as empty, which is worse than
+        # not reporting them.
+        deadline = time.monotonic() + DISK_SCAN_BUDGET_SECONDS
         folders = []
         try:
             entries = list(os.scandir(part.mountpoint))
@@ -538,10 +541,47 @@ def _largest_directories():
         folders.sort(key=lambda f: f["gb"], reverse=True)
         results.append({"mount": part.mountpoint,
                         "folders": folders[:TOP_DIRECTORIES_PER_VOLUME]})
-
-    _disk_usage_cache["at"] = now
-    _disk_usage_cache["value"] = results
+        # Published as each volume finishes rather than at the end, so a slow
+        # volume cannot hide a fast one that is already answered.
+        with _disk_scan_lock:
+            _disk_usage_cache["value"] = list(results)
     return results
+
+
+def _disk_scan_worker():
+    global _disk_scan_running
+    try:
+        value = _scan_disks()
+        with _disk_scan_lock:
+            _disk_usage_cache["value"] = value
+            _disk_usage_cache["at"] = time.monotonic()
+    except Exception as exc:  # noqa: BLE001 - a failed scan must not kill the agent
+        print(f"[disk scan failed] {exc}")
+    finally:
+        with _disk_scan_lock:
+            _disk_scan_running = False
+
+
+def _largest_directories():
+    """The biggest folders on each volume, as of the last completed scan.
+
+    Answers "what is filling this disk" without anyone logging in to look - the
+    question came up on 31 August with a volume at 88% and nothing able to say
+    what was on it.
+
+    The walk happens on a background thread and this returns whatever finished
+    last, because a heartbeat that waits minutes for a disk scan is a heartbeat
+    the platform records as a missed one. The first scan therefore reports
+    nothing, and the one after it reports everything.
+    """
+    global _disk_scan_running
+    now = time.monotonic()
+    with _disk_scan_lock:
+        fresh = _disk_usage_cache["value"] and now - _disk_usage_cache["at"] < DISK_SCAN_INTERVAL_SECONDS
+        if not fresh and not _disk_scan_running:
+            _disk_scan_running = True
+            threading.Thread(target=_disk_scan_worker, daemon=True, name="disk-scan").start()
+        return _disk_usage_cache["value"]
 
 
 def collect_metrics():
