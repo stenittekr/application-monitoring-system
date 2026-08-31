@@ -242,7 +242,11 @@ def resource_flags(server):
     into one cached read if the server count ever makes that matter."""
     flags = {}
     for metric, (warn_key, crit_key, warn_default, crit_default) in RESOURCE_THRESHOLD_DEFAULTS.items():
-        value = getattr(server, f"{metric}_percent")
+        # Disk is judged on the fullest volume, not the system drive. A full
+        # D: stops an application exactly as well as a full C:, and until an
+        # agent reports volumes this falls back to the system drive.
+        value = (server.worst_disk_percent if metric == "disk"
+                 else getattr(server, f"{metric}_percent"))
         if value is None:
             flags[metric] = "UNAVAILABLE"
         elif value >= _threshold(crit_key, crit_default):
@@ -263,7 +267,9 @@ def evaluate_resource_thresholds(server):
     is not the same as "fine", and must never read as either healthy or 0%."""
     breaches = []
     for metric, (warn_key, crit_key, warn_default, crit_default) in RESOURCE_THRESHOLD_DEFAULTS.items():
-        value = getattr(server, f"{metric}_percent")
+        # Same value the dashboard shows, so the two can never disagree.
+        value = (server.worst_disk_percent if metric == "disk"
+                 else getattr(server, f"{metric}_percent"))
         if value is None:
             continue  # not collected - report nothing rather than a false pass
         critical, warning = _threshold(crit_key, crit_default), _threshold(warn_key, warn_default)

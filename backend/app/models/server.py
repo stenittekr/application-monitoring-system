@@ -132,6 +132,26 @@ class Server(db.Model):
         return abs(self.clock_skew_seconds) <= self.CLOCK_SKEW_TOLERANCE_SECONDS
 
     @property
+    def fullest_volume(self):
+        """The volume closest to full, or None when only the system drive is known.
+
+        disk_percent has always meant C:. PS_QAS turned out to have an E: with
+        129 GB free while C: sat at 88% - and had it been the other way round,
+        nothing would have said so. A server is as full as its fullest disk,
+        because that is the one that stops an application.
+        """
+        volumes = self.disk_volumes
+        return max(volumes, key=lambda v: v.get("used_percent") or 0) if volumes else None
+
+    @property
+    def worst_disk_percent(self):
+        """The highest used-percentage across every volume this server reports."""
+        worst = self.fullest_volume
+        if worst is None:
+            return self.disk_percent          # older agent: system drive only
+        return max(worst.get("used_percent") or 0, self.disk_percent or 0)
+
+    @property
     def hardware(self):
         """Temperature, fan and battery, where the machine exposes them.
 
@@ -261,6 +281,8 @@ class Server(db.Model):
             "cpu_per_core": self.cpu_per_core,
             "hardware": self.hardware,
             "disk_volumes": self.disk_volumes,
+            "worst_disk_percent": self.worst_disk_percent,
+            "fullest_volume": self.fullest_volume,
             "scheduled_tasks": self.scheduled_tasks,
             "containers": self.containers,
             "clock_skew_seconds": self.clock_skew_seconds,

@@ -141,3 +141,49 @@ def test_a_healthy_dependency_does_not_suppress_anything(db, sample_application)
     sample_application.depends_on = [healthy.id]
     db.session.commit()
     assert failed_dependency(sample_application) is None
+
+
+# --------------------------------------------------------------------------
+# A server is as full as its fullest disk.
+#
+# PS_QAS reported 88% and a warning. That was C:. It also had an E: with 129 GB
+# free, which nothing mentioned - and had the two been the other way round,
+# nothing would have mentioned that either.
+# --------------------------------------------------------------------------
+import json
+
+
+def _volumes(db, server, volumes):
+    server.disk_volumes_json = json.dumps(volumes)
+    db.session.commit()
+
+
+def test_the_fullest_volume_is_the_one_that_counts(db, server):
+    server.disk_percent = 40.0
+    _volumes(db, server, [
+        {"mount": "C:\\", "fstype": "NTFS", "total_gb": 200.0, "used_percent": 40.0},
+        {"mount": "D:\\", "fstype": "NTFS", "total_gb": 500.0, "used_percent": 96.0},
+    ])
+    assert server.worst_disk_percent == 96.0
+    assert server.fullest_volume["mount"] == "D:\\"
+    assert server_service.resource_flags(server)["disk"] == "CRITICAL"
+
+
+def test_a_roomy_second_volume_does_not_mask_a_full_system_drive(db, server):
+    """The PS_QAS shape: C: nearly full, E: nearly empty. The warning stands."""
+    server.disk_percent = 88.0
+    _volumes(db, server, [
+        {"mount": "C:\\", "fstype": "NTFS", "total_gb": 200.7, "used_percent": 87.5},
+        {"mount": "E:\\", "fstype": "NTFS", "total_gb": 200.5, "used_percent": 35.7},
+    ])
+    assert server.worst_disk_percent == 88.0
+    assert server_service.resource_flags(server)["disk"] == "WARNING"
+
+
+def test_an_older_agent_falls_back_to_the_system_drive(db, server):
+    """Agents below v0.7.0 report no volumes. That must not read as 0% free."""
+    server.disk_percent = 97.0
+    server.disk_volumes_json = None
+    db.session.commit()
+    assert server.worst_disk_percent == 97.0          # not None, and not zero
+    assert server_service.resource_flags(server)["disk"] == "CRITICAL"
