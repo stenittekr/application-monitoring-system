@@ -5,11 +5,14 @@ checks and events, and to prove agent overhead rather than assert it. Nobody had
 measured anything: the platform runs two servers and nine applications, which
 tells you nothing about fifty or five hundred.
 
-Runs against a throwaway SQLite database, never dev.db. In-process rather than
-over HTTP, deliberately - the question is whether the storage and the cycle keep
-up, and a benchmark that also measures Flask, the network and the JSON encoder
-answers a vaguer question more slowly.
+Runs against a throwaway SQLite database and refuses to touch dev.db. In-process
+rather than over HTTP, deliberately - the question is whether the storage and the
+cycle keep up, and a benchmark that also measures Flask, the network and the JSON
+encoder answers a vaguer question more slowly.
 
+Point DATABASE_URL at a throwaway file first - it refuses to run otherwise:
+
+    set DATABASE_URL=sqlite:///C:/Temp/load.db
     python scripts/loadtest.py            # 10, 50, 200 servers
     python scripts/loadtest.py 500        # and one specific size
 
@@ -27,7 +30,6 @@ What it reports:
 import json
 import os
 import random
-import shutil
 import statistics
 import sys
 import tempfile
@@ -85,12 +87,29 @@ def measure(size):
     from app.models.application import Application
     from app.services import server_service
 
-    workdir = tempfile.mkdtemp(prefix="amns-load-")
-    os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(workdir, "load.db").replace("\\", "/")
     app = create_app()
 
     result = {"servers": size}
     with app.app_context():
+        # Verified against the engine actually bound, not against what we asked
+        # for. Setting DATABASE_URL from inside the process was supposed to be
+        # enough and was not - the engine is bound during create_app, before the
+        # override could apply - so an earlier run wrote a thousand fake servers
+        # into the live database, which the monitor then dutifully checked for
+        # twenty minutes. A benchmark that can reach production data is not a
+        # benchmark, so this refuses rather than trusting the variable.
+        actual = str(db.engine.url)
+        if "dev.db" in actual or not actual.startswith("sqlite:"):
+            raise SystemExit(
+                "REFUSING TO RUN: this is bound to the real database.\n"
+                f"  bound : {actual}\n\n"
+                "Point it at a throwaway file first, in the shell, before Python starts:\n"
+                "  Command Prompt : set DATABASE_URL=sqlite:///C:/Temp/load.db\n"
+                "  PowerShell     : $env:DATABASE_URL='sqlite:///C:/Temp/load.db'\n"
+                "  bash           : DATABASE_URL=sqlite:///C:/Temp/load.db python scripts/loadtest.py")
+
+        # A file left over from a previous run would make the numbers nonsense.
+        db.drop_all()
         db.create_all()
 
         servers = []
@@ -150,7 +169,6 @@ def measure(size):
 
         db.session.remove()
 
-    shutil.rmtree(workdir, ignore_errors=True)
     return result
 
 
