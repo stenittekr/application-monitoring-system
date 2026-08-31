@@ -71,6 +71,8 @@ def _perform_single_attempt(application):
             return _perform_database_attempt(application)
         if application.health_check_type == "WORKFLOW":
             return _perform_workflow_attempt(application)
+        if application.health_check_type in ("FILE", "LOG"):
+            return _perform_file_attempt(application)
         return _perform_http_attempt(application)
     except Exception as exc:  # noqa: BLE001 - deliberately broad, see below
         # Broad on purpose. Every narrower except above returns a verdict; the
@@ -257,6 +259,35 @@ def expiring_certificates(within_days=None):
                                                  Application.cert_expires_at.isnot(None))
             if a.cert_days_remaining is not None and a.cert_days_remaining <= within_days]
     return sorted(rows, key=lambda a: a.cert_days_remaining)
+
+
+def _perform_file_attempt(application):
+    """FILE and LOG checks (FR-010). Configuration lives in workflow_json.
+
+    Reuses that column rather than adding another: both are "a small JSON blob
+    describing what this check should do", and a second column of the same shape
+    is two places to look for one answer.
+    """
+    from app.services import file_check_service
+
+    start = time.monotonic()
+    config = application.workflow_steps or {}
+    if isinstance(config, list):        # tolerate a single-step list
+        config = config[0] if config else {}
+
+    try:
+        if application.health_check_type == "LOG":
+            ok, message = file_check_service.run_log_check(config)
+        else:
+            ok, message = file_check_service.run_file_check(config)
+    except Exception as exc:  # noqa: BLE001 - a broken check is not an outage
+        return _unrunnable(f"{type(exc).__name__}: {exc}")
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+    if ok:
+        return {"success": True, "status": "UP", "http_status_code": None,
+                "response_time": elapsed_ms, "error_message": None}
+    return _failure(start, message)
 
 
 def _perform_workflow_attempt(application):
