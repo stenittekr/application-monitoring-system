@@ -18,6 +18,10 @@ class Incident(db.Model):
     # can be short of disk AND unreachable; without this the two would share one
     # incident row and each would silently close the other.
     kind = db.Column(db.String(20), nullable=False, default="REACHABILITY")
+    # CRITICAL / HIGH / MEDIUM / LOW - derived when the incident is first
+    # alerted on, then kept, so a threshold change later cannot rewrite
+    # how urgent something was at the time.
+    severity = db.Column(db.String(10), nullable=True)
 
     started_at = db.Column(db.DateTime, nullable=False)
     detected_at = db.Column(db.DateTime, nullable=False)
@@ -35,7 +39,14 @@ class Incident(db.Model):
     acknowledged_at = db.Column(db.DateTime, nullable=True)
     acknowledged_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     assigned_to_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
-    escalated_at = db.Column(db.DateTime, nullable=True)  # set once, so escalation only fires once per incident
+    escalated_at = db.Column(db.DateTime, nullable=True)
+    # §11 step 9: an incident closes with a cause and a person, not just a
+    # timestamp. resolved_by is null when the platform closed it automatically,
+    # which is itself worth being able to tell apart.
+    resolved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    resolution_category = db.Column(db.String(50), nullable=True)
+    resolution_note = db.Column(db.String(1000), nullable=True)
+    reopened_count = db.Column(db.Integer, nullable=False, default=0)  # set once, so escalation only fires once per incident
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(
@@ -58,6 +69,11 @@ class Incident(db.Model):
             "server_id": self.server_id,
             "status": self.status,
             "kind": self.kind,
+            "severity": self.severity,
+            "resolved_by_id": self.resolved_by_id,
+            "resolution_category": self.resolution_category,
+            "resolution_note": self.resolution_note,
+            "reopened_count": self.reopened_count,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "detected_at": self.detected_at.isoformat() if self.detected_at else None,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,

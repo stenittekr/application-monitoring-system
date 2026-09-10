@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 DEGRADED_RESPONSE_MS = 3000  # success but slow => DEGRADED instead of UP
 
+# How much of a page to search for a content rule. A login page is a few KB;
+# anything beyond this is a report or a file download, and scanning all of it
+# every interval costs more than the answer is worth.
+MAX_BODY_INSPECTED = 200_000
+
 # Whole checks that must fail in a row before an incident is opened and anyone
 # is emailed. retry_count already retries within a single check; this requires
 # the failure to survive across separate checks, minutes apart, so a transient
@@ -56,12 +61,30 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 def _perform_single_attempt(application):
     """Sends one health-check probe (HTTP/HTTPS request or TCP connect,
     depending on the application's configured type) and returns a dict
-    describing the outcome."""
-    if application.health_check_type == "TCP":
-        return _perform_tcp_attempt(application)
-    if application.health_check_type == "DATABASE":
-        return _perform_database_attempt(application)
-    return _perform_http_attempt(application)
+    describing the outcome.
+
+    Each probe catches the failures that are *evidence about the target* - a
+    refused connection, a timeout, a driver refusing the credentials - and
+    reports them as DOWN. Anything that escapes to here is a fault in the
+    monitor instead: a missing driver, a malformed DSN, a bug of ours. That is
+    not evidence of anything, so it is reported as UNKNOWN.
+    """
+    try:
+        if application.health_check_type == "TCP":
+            return _perform_tcp_attempt(application)
+        if application.health_check_type == "DATABASE":
+            return _perform_database_attempt(application)
+        if application.health_check_type == "WORKFLOW":
+            return _perform_workflow_attempt(application)
+        if application.health_check_type in ("FILE", "LOG"):
+            return _perform_file_attempt(application)
+        return _perform_http_attempt(application)
+    except Exception as exc:  # noqa: BLE001 - deliberately broad, see below
+        # Broad on purpose. Every narrower except above returns a verdict; the
+        # only thing left here is the monitor breaking, and the one outcome we
+        # must never produce for that is silence.
+        logger.exception("Check for application %s could not run", application.name)
+        return _unrunnable(f"{type(exc).__name__}: {exc}")
 
 
 def _perform_tcp_attempt(application):
@@ -99,8 +122,8 @@ def _expand_dsn(raw):
     """Returns the DSN as a URL with its ${ENV_VAR} password resolved.
 
     The substitution happens on the parsed URL object, never on the URL text.
-    Real passwords contain URL-significant characters - "Awgt@2020" has an @
-    that ends the userinfo, "S#a#p#2024" has a # that starts a fragment - so
+    Real passwords contain URL-significant characters - "P@ssw0rd" has an @
+    that ends the userinfo, "s#ecret#24" has a # that starts a fragment - so
     expanding into the string first silently rewrites the host and the check
     times out against an address nobody meant to contact."""
     url = make_url(raw)
@@ -243,12 +266,68 @@ def expiring_certificates(within_days=None):
     return sorted(rows, key=lambda a: a.cert_days_remaining)
 
 
+def _perform_file_attempt(application):
+    """FILE and LOG checks (FR-010). Configuration lives in workflow_json.
+
+    Reuses that column rather than adding another: both are "a small JSON blob
+    describing what this check should do", and a second column of the same shape
+    is two places to look for one answer.
+    """
+    from app.services import file_check_service
+
+    start = time.monotonic()
+    config = application.workflow_steps or {}
+    if isinstance(config, list):        # tolerate a single-step list
+        config = config[0] if config else {}
+
+    try:
+        if application.health_check_type == "LOG":
+            ok, message = file_check_service.run_log_check(config)
+        else:
+            ok, message = file_check_service.run_file_check(config)
+    except Exception as exc:  # noqa: BLE001 - a broken check is not an outage
+        return _unrunnable(f"{type(exc).__name__}: {exc}")
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+    if ok:
+        return {"success": True, "status": "UP", "http_status_code": None,
+                "response_time": elapsed_ms, "error_message": None}
+    return _failure(start, message)
+
+
+def _perform_workflow_attempt(application):
+    """Runs the application's synthetic business transaction (layer 5).
+
+    A workflow failing is a real outage: the site answered, but nobody can
+    actually use it. That is precisely the case a URL check cannot see."""
+    from app.services.workflow_service import run_workflow
+
+    steps = application.workflow_steps
+    if not steps:
+        return _failure(0.0, "No workflow steps configured for this application.")
+
+    start = time.monotonic()
+    success, message, elapsed_ms = run_workflow(application, steps)
+    if not success:
+        return {
+            "success": False, "status": "DOWN", "http_status_code": None,
+            "response_time": elapsed_ms, "error_message": redact(message),
+        }
+    return {
+        "success": True,
+        "status": "DEGRADED" if elapsed_ms > DEGRADED_RESPONSE_MS else "UP",
+        "http_status_code": None, "response_time": elapsed_ms, "error_message": None,
+    }
+
+
 def _perform_http_attempt(application):
     """Sends one HTTP request and returns a dict describing the outcome."""
     start = time.monotonic()
     try:
+        wants_body = bool(application.expect_contains or application.expect_absent)
         response = requests.get(
-            application.url, timeout=application.timeout, allow_redirects=True, verify=application.verify_ssl
+            application.url, timeout=application.timeout, allow_redirects=True,
+            verify=application.verify_ssl, stream=not wants_body,
         )
         elapsed_ms = (time.monotonic() - start) * 1000
         success = response.status_code == application.expected_status_code
@@ -263,6 +342,19 @@ def _perform_http_attempt(application):
                     f"expected {application.expected_status_code}"
                 ),
             }
+        # The status code says something answered. These say it answered with
+        # the application - not an error page, a maintenance notice, or a login
+        # screen that a signed-in journey should have passed. §1: a running
+        # process does not prove an application is usable.
+        if wants_body:
+            body = response.text[:MAX_BODY_INSPECTED].lower()
+            needle = (application.expect_contains or "").strip().lower()
+            if needle and needle not in body:
+                return _failure(start, f"page did not contain '{application.expect_contains}'")
+            forbidden = (application.expect_absent or "").strip().lower()
+            if forbidden and forbidden in body:
+                return _failure(start, f"page contained '{application.expect_absent}'")
+
         status = "DEGRADED" if elapsed_ms > DEGRADED_RESPONSE_MS else "UP"
         return {
             "success": True,
@@ -281,6 +373,33 @@ def _perform_http_attempt(application):
         return _failure(start, str(exc))
 
 
+def _unrunnable(message):
+    """The result for a check that never ran.
+
+    On 25 August the MSSQL checks began raising ModuleNotFoundError because
+    pyodbc was installed where the service could not see it. The cycle logged
+    the traceback and moved on, so no health check row was written, no status
+    changed, and both applications sat on the dashboard showing UP for two
+    days while being checked 2,400 times and answering none of them.
+
+    A check that cannot run tells us nothing about the application. §11 is
+    explicit that nothing we are unsure of may read as healthy, so it is
+    recorded as UNKNOWN: visible, not green, and not an outage either -
+    reporting DOWN would be the same lie in the other direction.
+
+    response_time is None rather than 0.0 for the same reason: no probe was
+    timed, and a zero would drag the response-time average towards a
+    performance improvement that never happened.
+    """
+    return {
+        "success": False,
+        "status": "UNKNOWN",
+        "http_status_code": None,
+        "response_time": None,
+        "error_message": redact(f"Check could not run: {message}")[:400],
+    }
+
+
 def _failure(start, message):
     """Builds the standard DOWN result dict for a failed attempt, timing it from `start`.
 
@@ -295,6 +414,41 @@ def _failure(start, message):
         "response_time": elapsed_ms,
         "error_message": message,
     }
+
+
+# A heartbeat older than this many of the server's own intervals means the agent
+# is not currently reaching us either.
+CORROBORATION_STALE_INTERVALS = 3
+
+
+def host_is_reachable(application):
+    """Is the application's host demonstrably in contact with us right now?
+
+    Returns True (agent heartbeating), False (agent silent), or None (nothing
+    recorded to corroborate with).
+
+    An agent heartbeat is inbound over the same network path our outbound check
+    uses. A live heartbeat therefore proves the path works, which makes a failed
+    HTTP check the application's fault. Both failing together means the path
+    itself is gone, and blaming the application would be a guess.
+    """
+    # The host first, because its agent shares the application's fate exactly.
+    # Failing that, a nominated witness on the same network - for a database on
+    # a machine we do not monitor, a server we do monitor on the same network
+    # is the only evidence available, and it is better than none.
+    server_id = application.hosted_on_server_id or application.network_witness_server_id
+    if not server_id:
+        return None
+    from app.models.server import Server
+
+    server = db.session.get(Server, server_id)
+    if not server or not server.last_heartbeat_at:
+        return None
+    last = server.last_heartbeat_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    allowed = (server.heartbeat_interval_seconds or 60) * CORROBORATION_STALE_INTERVALS
+    return (datetime.now(timezone.utc) - last).total_seconds() <= allowed
 
 
 def apply_transition_from(application, health_check):
@@ -351,6 +505,32 @@ def run_health_check(application, apply_transition=True):
     return final_health_check
 
 
+def failed_dependency(application):
+    """A dependency of this application that is itself down, or None.
+
+    §13 asks that a confirmed parent failure suppress the child symptoms, and
+    §19 that a dependency outage not produce a separate alert per application
+    that uses it. When a database dies, every application on it fails within a
+    minute or two, and the second, third and fourth emails carry no information
+    the first did not - they only make the real cause harder to find.
+
+    Only an application with an open incident of its own counts as down. A
+    dependency merely looking unhealthy is not evidence enough to withhold an
+    alert about something else.
+    """
+    dependency_ids = [i for i in (application.depends_on or []) if i != application.id]
+    if not dependency_ids:
+        return None
+    from app.models.application import Application
+
+    for dependency in Application.query.filter(
+            Application.deleted_at.is_(None),
+            Application.id.in_(dependency_ids)).all():
+        if incident_service.get_active_incident(application_id=dependency.id):
+            return dependency
+    return None
+
+
 def _apply_transition(application, result, checked_at):
     application.current_status = result["status"]
     application.last_checked_at = checked_at
@@ -365,9 +545,17 @@ def _apply_transition(application, result, checked_at):
 
     now_down = result["status"] == "DOWN"
 
+    # A check that never ran is not a success and not a failure; it is a gap in
+    # the record. Clearing the streak on one would discard a genuine outage's
+    # progress towards being confirmed.
+    unrunnable = result["status"] == "UNKNOWN" and not result["success"]
+
     # Consecutive whole checks, not retries inside one check. A blip on a single
     # poll must never alert for a site that is actually serving.
-    application.failure_streak = (application.failure_streak or 0) + 1 if now_down else 0
+    if now_down:
+        application.failure_streak = (application.failure_streak or 0) + 1
+    elif not unrunnable:
+        application.failure_streak = 0
     db.session.commit()
 
     # Driven by whether an incident is actually open, not by the status
@@ -378,6 +566,31 @@ def _apply_transition(application, result, checked_at):
     required = _checks_before_incident()
 
     if now_down:
+        # Before blaming the application, check whether we can see its host at
+        # all. §11 is explicit that Unknown must never read as healthy - it does
+        # not alert, but it is not UP either.
+        corroborated = host_is_reachable(application)
+        if corroborated is False and not incident:
+            application.current_status = "UNKNOWN"
+            db.session.commit()
+            logger.warning(
+                "Application %s failed, but its host %s is not reaching us either - "
+                "recording UNKNOWN rather than DOWN. This looks like a network path "
+                "problem between the monitor and that host, not an application fault.",
+                application.name, application.hosted_on_server_id)
+            return
+
+        # Before opening one of our own, check whether something this
+        # application depends on has already failed. If so this is a symptom,
+        # and the alert for the cause has already gone out.
+        upstream = failed_dependency(application)
+        if upstream and not incident:
+            application.current_status = "DOWN"
+            db.session.commit()
+            logger.info("Application %s is failing because %s is down - recording the outage "
+                        "but not alerting separately.", application.name, upstream.name)
+            return
+
         if incident:
             notification_service.maybe_send_reminder(incident, application)
         elif application.failure_streak >= required:
@@ -396,7 +609,10 @@ def _apply_transition(application, result, checked_at):
         else:
             logger.info("Application %s failed check %d of %d required - not alerting until confirmed.",
                         application.name, application.failure_streak, required)
-    elif incident:
+    elif incident and result["success"]:
+        # Only an actual success closes an incident. Without the guard, the
+        # monitor losing its database driver would announce every open outage
+        # as recovered.
         incident_service.resolve_incident(incident, checked_at)
         notification_service.send_recovery_notification(incident, application)
         logger.info("Incident #%s resolved for application %s", incident.id, application.name)

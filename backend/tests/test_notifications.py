@@ -217,3 +217,31 @@ def test_standing_cc_list_is_added_to_application_alerts(db, sample_application)
     assert "ajoy@awgtc.com" in cc
     assert "raam@awgtc.com" in cc
     assert sample_application.manager_email in cc
+
+
+def test_a_resource_alert_is_not_titled_server_unreachable(db):
+    """A CPU threshold alert must not claim the machine is unreachable.
+
+    The real one that prompted this said "Server Unreachable" with a body of
+    "CPU 100% >= critical 95%". The server was answering throughout; the subject
+    sent the reader looking for a dead machine.
+    """
+    from datetime import datetime, timezone
+
+    from app.models.incident import Incident
+    from app.services import notification_service, server_service
+
+    server, _ = server_service.enroll({"hostname": "SUBJHOST", "owner_email": "ops@awgtc.com"})
+    incident = Incident(server_id=server.id, kind="RESOURCE", status="OPEN",
+                        started_at=datetime.now(timezone.utc),
+                        detected_at=datetime.now(timezone.utc),
+                        reason="CPU 100% >= critical 95%")
+    db.session.add(incident)
+    db.session.commit()
+
+    with patch("app.services.notification_service.send_email"):
+        notification = notification_service.send_server_down_notification(
+            incident, server, "CPU 100% >= critical 95%")
+
+    assert "Unreachable" not in notification.subject
+    assert "Resource Warning" in notification.subject

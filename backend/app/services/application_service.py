@@ -2,6 +2,8 @@
 from datetime import datetime, timezone
 
 from app.extensions import db
+import json
+
 from app.models.application import Application
 
 APPLICATION_FIELDS = (
@@ -9,8 +11,20 @@ APPLICATION_FIELDS = (
     "owner_name", "owner_email", "manager_name", "manager_email",
     "monitoring_enabled", "monitoring_interval", "timeout",
     "retry_count", "retry_delay", "expected_status_code", "verify_ssl",
-    "department", "icon", "baseline_notes",
+    "department", "icon", "baseline_notes", "criticality", "support_hours", "expect_contains", "expect_absent", "hosted_on_server_id", "network_witness_server_id", "sla_target_percent", "site",
 )
+
+
+def apply_workflow_steps(app_row, data):
+    """Stores the synthetic workflow steps when the caller sent them.
+
+    Kept out of APPLICATION_FIELDS because the column holds JSON while the
+    payload carries a list, and because an absent key must leave an existing
+    workflow alone rather than wiping it."""
+    if "workflow_steps" not in data:
+        return
+    steps = data.get("workflow_steps")
+    app_row.workflow_json = json.dumps(steps) if steps else None
 
 
 def list_applications(user):
@@ -65,13 +79,85 @@ def create_application(data, defaults):
         baseline_notes=(data.get("baseline_notes") or "").strip() or None,
         depends_on=data.get("depends_on") or [],
     )
+    apply_workflow_steps(app_row, data)
     db.session.add(app_row)
     db.session.commit()
     return app_row
 
 
-def update_application(app_row, data):
-    """Updates only the whitelisted fields present in data, normalizing strings/types as needed."""
+# The fields worth restoring. Deliberately not everything: current_status and
+# last_checked_at describe what happened, not what was configured, and rolling
+# those back would rewrite history rather than configuration.
+VERSIONED_FIELDS = APPLICATION_FIELDS + (
+    "criticality", "support_hours", "sla_target_percent", "site",
+    "hosted_on_server_id", "network_witness_server_id", "workflow_json",
+    "depends_on_json", "maturity_status",
+)
+
+
+def snapshot_application(app_row):
+    """The configuration of an application, as a plain dict."""
+    return {field: getattr(app_row, field, None) for field in VERSIONED_FIELDS}
+
+
+def record_version(app_row, user_id=None, note=None):
+    """Stores the profile as it is now, before a change lands.
+
+    Called before the edit rather than after, so version 1 is what the profile
+    looked like before anyone touched it - which is the version someone wants
+    back when a change turns out to be wrong.
+    """
+    import json
+
+    from app.models.application_version import ApplicationVersion
+
+    latest = (ApplicationVersion.query
+              .filter_by(application_id=app_row.id)
+              .order_by(ApplicationVersion.version.desc())
+              .first())
+    version = (latest.version + 1) if latest else 1
+    row = ApplicationVersion(
+        application_id=app_row.id, version=version,
+        snapshot_json=json.dumps(snapshot_application(app_row), default=str),
+        changed_by_id=user_id, change_note=note,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return row
+
+
+def rollback_application(app_row, version_number, user_id=None):
+    """Restores a stored version. Returns (application, error).
+
+    The current profile is snapshotted first, so a rollback is itself
+    reversible. Undo that cannot be undone is not a safety feature.
+    """
+    from app.models.application_version import ApplicationVersion
+
+    target = (ApplicationVersion.query
+              .filter_by(application_id=app_row.id, version=version_number)
+              .first())
+    if not target:
+        return None, f"Version {version_number} does not exist for this application."
+
+    record_version(app_row, user_id, note=f"Before rollback to version {version_number}")
+
+    snapshot = target.snapshot
+    for field in VERSIONED_FIELDS:
+        if field in snapshot:
+            setattr(app_row, field, snapshot[field])
+    db.session.commit()
+    return app_row, None
+
+
+def update_application(app_row, data, user_id=None):
+    """Updates only the whitelisted fields present in data, normalizing strings/types as needed.
+
+    The profile as it stands is versioned first (FR-019), so any change can be
+    undone and §19's "retain last valid version" holds without anyone having
+    remembered to take a copy.
+    """
+    record_version(app_row, user_id, note=data.get("change_note"))
     for field in APPLICATION_FIELDS:
         if field in data and data[field] is not None:
             value = data[field]
@@ -83,6 +169,7 @@ def update_application(app_row, data):
             if field == "port":
                 value = int(value)
             setattr(app_row, field, value)
+    apply_workflow_steps(app_row, data)
     if "maturity_status" in data and data["maturity_status"]:
         app_row.maturity_status = str(data["maturity_status"]).upper()
     if "depends_on" in data:

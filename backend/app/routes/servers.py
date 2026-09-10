@@ -3,7 +3,7 @@ from flask_jwt_extended import get_jwt_identity
 
 from app.auth.decorators import roles_required
 from app.services.audit_service import log_activity
-from app.extensions import limiter
+from app.extensions import db, limiter
 from app.services import server_service
 from app.utils.responses import success_response, error_response
 
@@ -95,3 +95,50 @@ def heartbeat():
 
     server_service.record_heartbeat(server, data)
     return success_response({"status": "ok", "next_heartbeat_in": server.heartbeat_interval_seconds})
+
+
+@bp.put("/<int:server_id>/alert-scope")
+@roles_required("ADMIN", "IT_MANAGER")
+def set_alert_scope(server_id):
+    """Marks a server as monitoring infrastructure, so its alerts stop at its owner.
+
+    The machine running the monitoring platform generates incidents about
+    itself - resource spikes, missed heartbeats when it is moved - which are
+    real, worth recording, and of no interest to the people who need to hear
+    about production.
+    """
+    server = server_service.get_server(server_id)
+    if not server:
+        return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
+
+    from app.models.server import Server
+
+    scope = str((request.get_json(silent=True) or {}).get("alert_scope") or "").upper()
+    if scope not in Server.ALERT_SCOPES:
+        return error_response(f"alert_scope must be one of {Server.ALERT_SCOPES}.",
+                              "VALIDATION_ERROR", 422)
+
+    server.alert_scope = scope
+    db.session.commit()
+    log_activity(int(get_jwt_identity()), "SERVER_ALERT_SCOPE_CHANGED", "Server", server.id,
+                 {"ALL": "everyone", "OWNER": "owner only", "NONE": "nobody"}[scope])
+    return success_response(server.to_dict())
+
+
+@bp.get("/<int:server_id>/capacity")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR", "APP_OWNER")
+def server_capacity(server_id):
+    """Disk growth rate and days until full (§8 growth trend, §19 disk fills rapidly).
+
+    Returns null when there is not enough history to say. A percentage tells you
+    a disk is 84% full; it cannot tell you whether that took two years or two
+    days, and only one of those needs doing something about this week.
+    """
+    from app.services import capacity_service
+
+    server = server_service.get_server(server_id)
+    if not server:
+        return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
+    return success_response({"server_id": server.id,
+                             "forecast": capacity_service.disk_forecast(server),
+                             "history": capacity_service.disk_history(server)})

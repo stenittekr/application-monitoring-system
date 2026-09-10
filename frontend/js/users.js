@@ -15,10 +15,14 @@
     load();
 
     // Fetches all users and renders the table.
+    // Disabled accounts stay in the database - they are referenced by audit
+    // records and incident acknowledgements, and §18 requires those stay whole -
+    // but the page lists people, not history. Re-enabling one is a database
+    // change, which is the right amount of friction for it.
     async function load() {
         try {
             const users = await api.get("/users");
-            renderTable(users);
+            renderTable(users.filter((u) => u.is_active));
         } catch (err) {
             showError(err);
         }

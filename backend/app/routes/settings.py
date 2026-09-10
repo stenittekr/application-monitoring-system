@@ -52,3 +52,27 @@ def update_setting(setting_key):
     log_activity(actor_id, "SETTINGS_CHANGED", "SystemSetting", row.id,
                  f"Changed {setting_key} from '{old_display}' to '{new_display}'.", request.remote_addr)
     return success_response(_masked_dict(row))
+
+
+@bp.get("/alerting-status")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR", "APP_OWNER")
+def alerting_status():
+    """Whether incident alert email is currently switched on.
+
+    Readable by everyone who can see incidents, not only administrators. A
+    quiet inbox has two possible meanings - nothing is wrong, or nobody is
+    being told - and the whole point of this platform is that those never look
+    the same.
+    """
+    from app.services.notification_service import alerts_enabled, _in_quiet_days
+
+    import socket
+
+    return success_response({
+        "alerts_enabled": alerts_enabled(),
+        "quiet_today": _in_quiet_days(),
+        # Which machine is deciding. Alerts sent from a laptop that leaves the
+        # network are mostly about the laptop leaving the network, and knowing
+        # where the platform is running is half of reading them correctly.
+        "running_on": socket.gethostname(),
+    })

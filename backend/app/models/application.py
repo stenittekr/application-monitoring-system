@@ -40,6 +40,19 @@ class Application(db.Model):
     expected_status_code = db.Column(db.Integer, nullable=False, default=200)
     verify_ssl = db.Column(db.Boolean, nullable=False, default=True)
     department = db.Column(db.String(100), nullable=True)
+    criticality = db.Column(db.String(20), nullable=True)   # CRITICAL raises the alert floor
+    # The availability this application is expected to meet, as a percentage.
+    # Null means nobody has committed to one, which reports must show as
+    # "no target" rather than inventing 99.9 and marking everyone against it.
+    sla_target_percent = db.Column(db.Float, nullable=True)
+    # What the page must and must not say. A status code proves something
+    # answered; these prove it answered with the application rather than with an
+    # error page, a maintenance notice or a login screen it should have passed.
+    expect_contains = db.Column(db.String(300), nullable=True)
+    expect_absent = db.Column(db.String(300), nullable=True)
+    site = db.Column(db.String(100), nullable=True)          # FR-023 grouping
+    tags_json = db.Column(db.Text, nullable=True)
+    support_hours = db.Column(db.String(50), nullable=True)  # "08:00-18:00", or 24x7
     icon = db.Column(db.String(50), nullable=True)  # bootstrap-icons class, e.g. "bi-people"
 
     current_status = db.Column(db.String(20), nullable=False, default="UNKNOWN")
@@ -62,6 +75,20 @@ class Application(db.Model):
     cert_expires_at = db.Column(db.DateTime, nullable=True)
     cert_issuer = db.Column(db.String(300), nullable=True)
     cert_checked_at = db.Column(db.DateTime, nullable=True)
+    # Layer 5: a declarative synthetic business transaction. JSON steps, never
+    # code - see workflow_service for the vocabulary and why it is limited.
+    workflow_json = db.Column(db.Text, nullable=True)
+    # The server this application runs on, where we monitor it. Its agent is a
+    # second witness: heartbeats travel the same network path in reverse, so a
+    # live agent proves the path works and a failed check is the application's
+    # fault - while both being silent means we simply cannot see that host.
+    hosted_on_server_id = db.Column(db.Integer, db.ForeignKey("servers.id"), nullable=True)
+    # A server whose agent proves we are still on the network this target sits
+    # on. Not the same as a host: the SQL Server at 162.20.20.250 does not run
+    # on PS_QAS, but both are reachable only from the office network, so a live
+    # heartbeat from PS_QAS is evidence that a failed database check means the
+    # database, and a silent one means we cannot see that network at all.
+    network_witness_server_id = db.Column(db.Integer, db.ForeignKey("servers.id"), nullable=True)
     baseline_notes = db.Column(db.Text, nullable=True)
 
     last_checked_at = db.Column(db.DateTime, nullable=True)
@@ -82,6 +109,11 @@ class Application(db.Model):
     incidents = db.relationship(
         "Incident", backref="application", lazy="dynamic", cascade="all, delete-orphan"
     )
+
+    @property
+    def tags(self):
+        """Free-form labels for grouping and filtering (FR-023)."""
+        return json.loads(self.tags_json) if self.tags_json else []
 
     @property
     def tracked_databases(self):
@@ -106,6 +138,11 @@ class Application(db.Model):
             match = found.get(name.lower())
             result.append(match if match else {"name": name, "state": "NOT FOUND", "recovery_model": None})
         return result
+
+    @property
+    def workflow_steps(self):
+        """The synthetic workflow steps, or [] if none is configured."""
+        return json.loads(self.workflow_json) if self.workflow_json else []
 
     @property
     def cert_days_remaining(self):
@@ -157,6 +194,13 @@ class Application(db.Model):
             "expected_status_code": self.expected_status_code,
             "verify_ssl": self.verify_ssl,
             "department": self.department,
+            "criticality": self.criticality,
+            "sla_target_percent": self.sla_target_percent,
+            "expect_contains": self.expect_contains,
+            "expect_absent": self.expect_absent,
+            "site": self.site,
+            "tags": self.tags,
+            "support_hours": self.support_hours,
             "icon": self.icon,
             "current_status": self.current_status,
             "maturity_status": self.maturity_status,
@@ -164,6 +208,9 @@ class Application(db.Model):
             "discovered_databases": self.discovered_databases,
             "cert_expires_at": self.cert_expires_at.isoformat() if self.cert_expires_at else None,
             "cert_issuer": self.cert_issuer,
+            "workflow_steps": self.workflow_steps,
+            "hosted_on_server_id": self.hosted_on_server_id,
+            "network_witness_server_id": self.network_witness_server_id,
             "cert_days_remaining": self.cert_days_remaining,
             "tracked_databases": self.tracked_databases,
             "baseline_notes": self.baseline_notes,

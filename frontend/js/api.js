@@ -127,9 +127,52 @@ function formatDateTime(iso) {
 }
 
 // Builds the small colored status badge HTML for a given status string.
+// Statuses whose stored name is not what a person should be shown. The badge
+// has to answer "what do I do about it" at a glance, and AGENT_DOWN read as
+// shouty machine-speak is the same trap as calling the server DOWN.
+const STATUS_LABELS = {
+    AGENT_DOWN: "Agent not reporting",
+    STALE: "No fresh data",
+};
+
+const STATUS_TITLES = {
+    AGENT_DOWN: "The server is running - its applications are responding - but its "
+        + "agent has stopped checking in. Check the agent service and the hub_url "
+        + "in its config.json.",
+    STALE: "The last heartbeat is too old for these metrics to be trusted.",
+};
+
 function statusBadge(status) {
-    const label = status || "UNKNOWN";
-    return `<span class="status-badge status-${label}">${label}</span>`;
+    const key = status || "UNKNOWN";
+    const label = STATUS_LABELS[key] || key;
+    const title = STATUS_TITLES[key] ? ` title="${STATUS_TITLES[key]}"` : "";
+    return `<span class="status-badge status-${key}"${title}>${label}</span>`;
+}
+
+/** Shows read-only HTML in a modal. For content people look at rather than answer. */
+function showModal(title, bodyHtml) {
+    let el = document.getElementById("amns-info-modal");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "amns-info-modal";
+        el.className = "modal fade";
+        el.innerHTML = `
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"></h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body"></div>
+                </div>
+            </div>`;
+        document.body.appendChild(el);
+    }
+    el.querySelector(".modal-title").textContent = title;
+    // Callers build this from data they have already escaped; it is never raw
+    // user input reaching innerHTML unchecked.
+    el.querySelector(".modal-body").innerHTML = bodyHtml;
+    new bootstrap.Modal(el).show();
 }
 
 /** Returns a Promise<boolean> resolved by the user's choice in a Bootstrap modal. */
@@ -193,9 +236,11 @@ function confirmAction(message) {
 //   AUDITOR     - Auditor/Management, read-only across dashboards/reports/audit trail
 const NAV_ITEMS = [
     { key: "dashboard", label: "Dashboard", href: "dashboard.html", icon: "bi-speedometer2", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
+    { key: "applications", label: "Applications", href: "applications.html", icon: "bi-window-stack", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
     { key: "incidents", label: "Incidents", href: "incidents.html", icon: "bi-exclamation-triangle", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
     { key: "health-checks", label: "Health Checks", href: "health-checks.html", icon: "bi-heart-pulse", roles: ["ADMIN", "IT_MANAGER", "APP_OWNER", "OPERATOR", "AUDITOR"] },
     { key: "servers", label: "Servers", href: "servers.html", icon: "bi-hdd-network", roles: ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"] },
+    { key: "databases", label: "Databases", href: "databases.html", icon: "bi-database", roles: ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"] },
     { key: "reports", label: "Reports", href: "reports.html", icon: "bi-bar-chart", roles: ["ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR"] },
     { key: "activity-logs", label: "Activity Logs", href: "activity-logs.html", icon: "bi-journal-text", roles: ["ADMIN", "IT_MANAGER", "AUDITOR"] },
     { key: "users", label: "Users", href: "users.html", icon: "bi-people", roles: ["ADMIN", "IT_MANAGER"] },

@@ -1,0 +1,175 @@
+===========================================================================
+  MONITORING AGENT - HOW TO INSTALL
+  Centralized Server & Application Monitoring Platform, AWGTC
+===========================================================================
+
+WHAT THIS IS
+  A small background service that reports this machine's health to the
+  central monitoring platform: CPU, memory, disk, services, and whether
+  the applications on it are running.
+
+  It is read-only. It never accepts commands, never opens a port on this
+  machine, and gives nobody remote access to it.
+
+WHAT YOU NEED
+  1. Administrator rights on this machine.
+  2. The enrolment token (step 2 below).
+
+  Nothing else. Python is included in this folder and installs itself if
+  the machine does not already have it.
+
+
+===========================================================================
+  STEP 1  -  COPY THE FOLDER
+===========================================================================
+  Copy the WHOLE folder to the machine - not just Install.bat.
+  Anywhere is fine: Desktop, Downloads, a USB stick.
+
+
+===========================================================================
+  STEP 2  -  GET THE TOKEN
+===========================================================================
+  Ask IT for it, or if you administer the platform:
+
+      Open the platform in a browser and log in
+        -> Servers
+        -> "Add a machine"
+        -> Copy
+
+  Two Copy buttons are offered:
+
+      Token only        paste it when the installer asks
+      Whole command     paste into Command Prompt, no prompt at all
+
+  The token is used once, to register this machine. Afterwards the machine
+  has its own credential and the token is never needed again.
+
+  It expires 8 hours after signing in. Treat it like a password.
+
+
+===========================================================================
+  STEP 3  -  RUN THE INSTALLER
+===========================================================================
+  Right-click  Install.bat   ->   "Run as administrator"
+
+  Then paste the token when asked and press Enter.
+  (Right-click pastes into a Command Prompt window.)
+
+  If the machine has no Python, the installer puts it on first. That takes
+  a few minutes and needs no input.
+
+  BETTER, because the window cannot vanish and you keep the output:
+
+      1. Start -> type cmd -> right-click "Command Prompt"
+         -> "Run as administrator"
+      2. cd /d <the folder you copied>
+      3. Install.bat
+
+
+===========================================================================
+  STEP 4  -  CONFIRM IT WORKED
+===========================================================================
+  The installer finishes with:
+
+      Done. <MACHINE NAME> is monitored and will start itself
+      after a reboot.
+
+  Then check the platform: the Servers page lists this machine within a
+  minute, with its CPU, memory, disk and inventory.
+
+  On the machine itself:
+
+      Get-Service AMNSAgent            (PowerShell)
+      sc query AMNSAgent               (Command Prompt)
+
+  It should say Running / RUNNING.
+
+  Nothing further is needed. It starts automatically after every reboot and
+  restarts itself if it stops unexpectedly.
+
+
+===========================================================================
+  IF SOMETHING GOES WRONG
+===========================================================================
+  Every run appends to  install-log.txt  beside Install.bat, with the real
+  output of each step. Send that file to IT.
+
+  "Not running as Administrator"
+        You left-clicked it. Right-click -> Run as administrator.
+
+  "agent.py is not in this folder"
+        Only Install.bat was copied. Copy the whole folder.
+
+  "No working Python on this machine"
+        This copy of the folder does not include python-setup.exe. Ask IT
+        for the complete package, or install Python 3.10+ from python.org
+        ticking "Add python.exe to PATH".
+
+        NOTE: the Python from the Microsoft Store does NOT work - it cannot
+        run with administrator rights. The installer rejects it on purpose.
+
+  "pip install failed"
+        The machine cannot reach the Python package index. Ask IT for the
+        package that includes the "wheels" folder, which installs offline.
+
+  "Enrolment failed"
+        Either the token expired - get a fresh one - or this machine cannot
+        reach the platform. Test it:
+
+            Test-NetConnection <platform-host> -Port 5000
+
+        TcpTestSucceeded must be True.
+
+  "Enrolment reported success but wrote no configuration"
+        Send install-log.txt to IT.
+
+  "The service installed but is not running"
+        Event Viewer -> Windows Logs -> Application, look for
+        "AMNS Agent crashed". Send that message with install-log.txt.
+
+
+===========================================================================
+  TO REMOVE IT
+===========================================================================
+  Administrator Command Prompt:
+
+      cd C:\AMNSAgent
+      python agent_service.py stop
+      python agent_service.py remove
+
+  Then ask IT to delete the machine on the platform's Servers page.
+
+
+===========================================================================
+  WHAT IT COLLECTS
+===========================================================================
+  Machine name, model, serial number, Windows version; CPU, memory and disk
+  usage; network interfaces; installed programs; Windows services; running
+  processes; scheduled tasks; listening ports; and which database servers
+  those programs connect to.
+
+  It does NOT read your files, documents, email, browsing history or
+  keystrokes, and holds no passwords. It cannot be used to view or control
+  this machine.
+
+
+===========================================================================
+  FOR WHOEVER PREPARES THIS PACKAGE
+===========================================================================
+  Before sharing the folder, open Install.bat and set line 28 to the
+  platform's address:
+
+      set "PLATFORM=AWGTC-PORTAL-QAS:5000"
+
+  Use the HOSTNAME, never an IP address. Addresses change - the laptop's
+  has changed eight times in three weeks.
+
+  For many machines at once the installer takes both as arguments, so
+  nothing is typed and no prompt appears:
+
+      Install.bat <token> <platform-host:port>
+
+  That is the form a Group Policy startup script or an SCCM package calls.
+
+  Questions: stenitte@awgtc.com
+===========================================================================

@@ -117,3 +117,56 @@ def test_tcp_check_timeout_marks_down(db):
     check = HealthCheck.query.filter_by(application_id=app_row.id).first()
     assert check.success is False
     assert "timed out" in check.error_message.lower()
+
+
+# --------------------------------------------------------------------------
+# §1: "a running process does not prove that an application is usable".
+# A status code proves something answered. It does not prove what answered.
+# --------------------------------------------------------------------------
+
+class _Body:
+    def __init__(self, status_code, text):
+        self.status_code, self.text = status_code, text
+
+
+def test_a_200_that_says_unavailable_is_not_up(db, sample_application):
+    """The failure this exists for: an error page returning 200."""
+    sample_application.expect_absent = "Service Unavailable"
+    db.session.commit()
+    with patch("app.services.monitoring_service.requests.get",
+               return_value=_Body(200, "<h1>Service Unavailable</h1>")):
+        with patch("app.services.notification_service.send_email"):
+            run_health_check(sample_application)
+    assert sample_application.current_status == "DOWN"
+
+
+def test_a_page_missing_its_expected_content_is_not_up(db, sample_application):
+    sample_application.expect_contains = "Sign in"
+    db.session.commit()
+    with patch("app.services.monitoring_service.requests.get",
+               return_value=_Body(200, "<html>nothing useful here</html>")):
+        with patch("app.services.notification_service.send_email"):
+            run_health_check(sample_application)
+    assert sample_application.current_status == "DOWN"
+
+
+def test_the_real_page_passes_both_rules(db, sample_application):
+    sample_application.expect_contains = "Sign in"
+    sample_application.expect_absent = "Service Unavailable"
+    db.session.commit()
+    with patch("app.services.monitoring_service.requests.get",
+               return_value=_Body(200, "<form>Sign in</form>")):
+        with patch("app.services.notification_service.send_email"):
+            run_health_check(sample_application)
+    assert sample_application.current_status == "UP"
+
+
+def test_an_application_with_no_rules_behaves_exactly_as_before(db, sample_application):
+    """Existing checks must not change behaviour, or every application needs
+    re-verifying before this can ship."""
+    assert sample_application.expect_contains is None
+    with patch("app.services.monitoring_service.requests.get",
+               return_value=_Body(200, "anything at all")):
+        with patch("app.services.notification_service.send_email"):
+            run_health_check(sample_application)
+    assert sample_application.current_status == "UP"

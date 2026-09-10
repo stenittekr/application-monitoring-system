@@ -14,6 +14,11 @@ env/
 
 # Databases (local/dev only - real data lives in SQL Server)
 *.db
+# SQLite sidecars. They hold real database pages, change on every write, and
+# were being tracked because *.db does not match them.
+*.db-wal
+*.db-shm
+*.db-journal
 *.sqlite
 *.sqlite3
 
@@ -26,3 +31,15 @@ monitoring/logs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Rollback copies the agent keeps beside itself
+agent.py.*
+
+# Installer log written on the target machine
+client-installer/install-log.txt
+
+# Secret/credential files (none currently exist, kept as a safety net)
+*.pem
+*.key
+*credentials*
+config.json

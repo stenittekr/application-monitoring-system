@@ -5,8 +5,15 @@
 
     document.getElementById("apply-filters-btn").addEventListener("click", load);
     document.getElementById("export-btn").addEventListener("click", exportCsv);
+    document.getElementById("export-xlsx-btn").addEventListener("click", exportXlsx);
+    document.getElementById("print-btn").addEventListener("click", printReport);
 
     init();
+    // The report only reloaded on "Apply filters", so figures went stale while
+    // the page sat open. load() rebuilds the query from the current filters, so
+    // polling respects whatever the user has selected. 30s rather than the 5s
+    // used elsewhere: this endpoint aggregates every health check in the window.
+    setInterval(load, 30000);
 
     // Loads the application dropdown, then loads the initial report.
     async function init() {
@@ -33,7 +40,46 @@
     }
 
     // Fetches the availability report matching the current filters and renders the table.
+    // MTTD / MTTA / MTTR. Each tile carries the sample it was averaged over:
+    // a four-minute MTTA drawn from one incident out of forty is not a number
+    // anyone should plan around, and hiding that makes the figure a lie.
+    async function loadResponseMetrics() {
+        const container = document.getElementById("response-metrics");
+        try {
+            const m = await api.get(`/reports/response-metrics?${buildQuery()}`);
+            const tiles = [
+                { label: "Mean time to detect", value: m.mttd_minutes, sample: m.mttd_sample,
+                  hint: "Outage began to platform noticed" },
+                { label: "Mean time to acknowledge", value: m.mtta_minutes, sample: m.mtta_sample,
+                  hint: "Noticed to a person picking it up" },
+                { label: "Mean time to restore", value: m.mttr_minutes, sample: m.mttr_sample,
+                  hint: "Noticed to service returning" },
+                { label: "Incidents in window", value: m.incidents, sample: null, raw: true,
+                  hint: `${m.unacknowledged} never acknowledged, ${m.unresolved} still open` },
+            ];
+            container.innerHTML = tiles.map((t) => `
+                <div class="col-6 col-xl-3">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <div class="text-muted small mb-2">${t.label}</div>
+                            <div class="stat-value text-primary">${
+                                t.value === null || t.value === undefined
+                                    ? `<span class="fs-6 fst-italic text-muted">No data</span>`
+                                    : (t.raw ? t.value : `${t.value}<span class="fs-6 text-muted"> min</span>`)
+                            }</div>
+                            <div class="small text-muted mt-2">${escapeHtml(t.hint)}</div>
+                            ${t.sample !== null && t.sample !== undefined
+                                ? `<div class="small text-muted fst-italic">from ${t.sample} incident(s)</div>` : ""}
+                        </div>
+                    </div>
+                </div>`).join("");
+        } catch (err) {
+            container.innerHTML = "";
+        }
+    }
+
     async function load() {
+        loadResponseMetrics();
         try {
             const rows = await api.get(`/reports/availability?${buildQuery()}`);
             renderTable(rows);
@@ -42,11 +88,26 @@
         }
     }
 
-    // Picks the status-badge color tier for an availability percentage.
+    // A target nobody set is not a target missed. Saying "no target" is the
+    // honest answer; assuming 99.9 would mark every application as failing
+    // something it was never asked to meet.
+    function slaCell(row) {
+        if (row.sla_target_percent === null || row.sla_target_percent === undefined) {
+            return '<span class="text-muted small">no target</span>';
+        }
+        const met = row.sla_met;
+        return `<span class="badge bg-${met ? "success" : "danger"}-subtle text-${met ? "success" : "danger"}-emphasis border border-${met ? "success" : "danger"}-subtle">
+                    ${met ? "met" : "missed"}</span>
+                <span class="small text-muted">target ${row.sla_target_percent}%</span>`;
+    }
+
+    // Picks a color/label for an availability percentage over the report window.
+    // Deliberately NOT the UP/DOWN/DEGRADED words used for live status elsewhere -
+    // this reflects a historical score, not whether the app is up right now.
     function availabilityTier(percent) {
-        if (percent >= 99) return "UP";
-        if (percent >= 95) return "DEGRADED";
-        return "DOWN";
+        if (percent >= 99) return { cls: "bg-success-subtle text-success-emphasis border", label: "Healthy" };
+        if (percent >= 95) return { cls: "bg-warning-subtle text-warning-emphasis border", label: "At Risk" };
+        return { cls: "bg-danger-subtle text-danger-emphasis border", label: "Poor" };
     }
 
     // Renders the availability report table rows.
@@ -61,7 +122,8 @@
                 <td>${escapeHtml(r.application_name)}</td>
                 <td>${escapeHtml(r.environment)}</td>
                 <td>${r.successful_checks}/${r.total_checks}</td>
-                <td>${statusBadge(availabilityTier(r.availability_percent))} ${r.availability_percent}%</td>
+                <td><span class="badge ${availabilityTier(r.availability_percent).cls}">${availabilityTier(r.availability_percent).label}</span> ${r.availability_percent}%</td>
+                <td>${slaCell(r)}</td>
                 <td>${r.avg_response_time !== null ? Math.round(r.avg_response_time) + " ms" : "-"}</td>
                 <td>${r.incident_count}</td>
                 <td>${formatMinutes(r.avg_downtime_seconds)}</td>
@@ -74,6 +136,47 @@
     }
 
     // Downloads the current filtered report as a CSV file.
+    // Excel rather than CSV when the numbers are going into a pack: the
+    // workbook carries a second sheet saying what the figures mean, which a CSV
+    // cannot, and those caveats are exactly what gets lost on the way to a
+    // slide.
+    async function exportXlsx() {
+        try {
+            const response = await api.get(`/reports/availability/export.xlsx?${buildQuery()}`);
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "availability_report.xlsx";
+            link.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            showError(err);
+        }
+    }
+
+    // PDF via the browser's own print dialogue rather than a PDF library. It
+    // renders this page better than we would, needs no dependency, and
+    // "Save as PDF" is already in the dialogue every reader knows.
+    function printReport() {
+        // The filter bar does not print, so the range it represents is restated
+        // in the header. §17: a report that does not say what it covers is a
+        // number without a question.
+        const from = document.getElementById("filter-date-from");
+        const to = document.getElementById("filter-date-to");
+        const app = document.getElementById("filter-application");
+        const meta = document.getElementById("print-meta");
+        if (meta) {
+            meta.textContent = [
+                `Range: ${(from && from.value) || "last 30 days"} to ${(to && to.value) || "today"}`,
+                `Application: ${app && app.selectedOptions.length ? app.selectedOptions[0].text : "all"}`,
+                "Times in UTC",
+                `Generated ${new Date().toLocaleString()}`,
+            ].join("  |  ");
+        }
+        window.print();
+    }
+
     async function exportCsv() {
         try {
             const response = await api.get(`/reports/availability/export?${buildQuery()}`);

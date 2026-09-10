@@ -266,6 +266,35 @@ body {
 .status-UNKNOWN, .status-DISABLED { background: rgba(108, 117, 125, 0.12); color: var(--amns-unknown); }
 .status-UNKNOWN::before, .status-DISABLED::before { background: var(--amns-unknown); }
 
+/* STALE = we have no fresh data. Deliberately not green and not grey: the point
+   is that it must never be mistaken for healthy, nor dismissed as "no data". */
+.status-STALE { background: rgba(150, 100, 0, 0.14); color: #8a5a00; }
+.status-STALE::before { background: #8a5a00; }
+
+/* AGENT_DOWN = the server is fine, the reporting is not. Blue rather than red:
+   it is a real fault worth fixing, but nobody needs to be woken up for it. */
+.status-AGENT_DOWN { background: rgba(13, 110, 253, 0.12); color: #0a58ca; }
+.status-AGENT_DOWN::before { background: #0a58ca; }
+
+/* Stat cards are links now, so they need to look and behave like one. */
+a.stat-card { transition: transform .12s ease, box-shadow .12s ease; }
+a.stat-card:hover { transform: translateY(-2px); box-shadow: 0 .5rem 1rem rgba(0,0,0,.1) !important; }
+a.stat-card:focus-visible { outline: 2px solid var(--amns-accent); outline-offset: 2px; }
+
+/* The reason lines under a stat: clipped to the card, never spilling out. */
+.stat-detail {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    a.stat-card { transition: none; }
+    a.stat-card:hover { transform: none; }
+}
+
 /* ---------- Misc ---------- */
 .stat-card .stat-value {
     font-size: 1.9rem;
@@ -307,3 +336,31 @@ body {
 .cursor-pointer {
     cursor: pointer;
 }
+
+/* Printing a report is how it reaches a management pack, so it has to survive
+   the trip. §17 requires every report to state its range, timezone and how it
+   was calculated - on screen those sit in the filter bar, which does not print,
+   so the range is restated in the header instead. */
+@media print {
+    .sidebar, .navbar, #amns-sidebar, .btn, .no-print,
+    nav, footer, .toast-container { display: none !important; }
+
+    body { background: #fff !important; color: #000 !important; font-size: 11pt; }
+    #amns-page-content { margin: 0 !important; padding: 0 !important; }
+    .card { border: 1px solid #ccc !important; box-shadow: none !important; break-inside: avoid; }
+    .card-header { background: #fff !important; border-bottom: 1px solid #ccc !important; }
+
+    /* Tables split across pages; the header has to come with them or the
+       second page is a column of unlabelled numbers. */
+    table { font-size: 10pt; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+
+    /* Colour-only status is meaningless once printed in mono. */
+    .badge, .status-badge { border: 1px solid #666 !important; color: #000 !important;
+                            background: transparent !important; }
+
+    #print-header { display: block !important; }
+}
+
+#print-header { display: none; }

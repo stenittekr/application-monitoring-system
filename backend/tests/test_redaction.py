@@ -8,24 +8,24 @@ from app.utils.redaction import redact
 
 
 def test_connection_string_password_is_masked():
-    text = "connect failed: mssql+pyodbc://awgtcps:Awgt@2020@162.20.20.250,1433/master"
+    text = "connect failed: mssql+pyodbc://awgtcps:P@ssw0rd@162.20.20.250,1433/master"
     out = redact(text)
-    assert "Awgt@2020" not in out
+    assert "P@ssw0rd" not in out
     assert "162.20.20.250" in out, "the host is diagnostic information and must survive"
 
 
 def test_named_secret_parameters_are_masked():
     for text in ("password=hunter2", "Token: abc123def456", "api_key = zzzz9999",
-                 "PWD=S#a#p#2024;UID=sap"):
+                 "PWD=s#ecret#24;UID=sap"):
         out = redact(text)
         assert "hunter2" not in out
         assert "abc123def456" not in out
         assert "zzzz9999" not in out
-        assert "S#a#p#2024" not in out
+        assert "s#ecret#24" not in out
 
 
 def test_bearer_tokens_and_agent_tokens_are_masked():
-    token = "949521d9a0bee00f4d74cf0f38fa92ff094aafadb76a78bad2d46c542add5911"
+    token = "deadbeefcafe0000deadbeefcafe0000deadbeefcafe0000deadbeefcafe0000"
     assert token not in redact(f"heartbeat rejected for token {token}")
     assert "eyJhbGciOiJIUzI1NiJ9" not in redact("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9")
 

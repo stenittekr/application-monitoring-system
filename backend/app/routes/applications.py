@@ -1,7 +1,7 @@
 from flask import Blueprint, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models.user import User
 from app.models.health_check import HealthCheck
 from app.models.incident import Incident
@@ -91,7 +91,7 @@ def update_application(application_id):
         return error_response("; ".join(errors), "VALIDATION_ERROR", 422)
 
     before_interval = app_row.monitoring_interval
-    application_service.update_application(app_row, data)
+    application_service.update_application(app_row, data, int(get_jwt_identity()))
     description = f"{user.name} updated application {app_row.name}."
     if "monitoring_interval" in data and int(data["monitoring_interval"]) != before_interval:
         description = (
@@ -196,3 +196,63 @@ def get_application_incidents(application_id):
         .all()
     )
     return success_response([i.to_dict() for i in incidents])
+
+
+@bp.get("/<int:application_id>/diagnose")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR", "APP_OWNER")
+@limiter.limit("20 per minute")
+def diagnose_application(application_id):
+    """Why this application is not working, step by step (§19 diagnostics).
+
+    On demand rather than on the cycle: it makes up to four live probes, and
+    nobody needs that every 60 seconds for every application. Rate limited for
+    the same reason - it is the one read endpoint that reaches outward, and a
+    page refreshing in a loop must not turn into a probe storm.
+    """
+    from app.services import diagnose_service, server_service
+
+    app_row = application_service.get_application(application_id)
+    if not app_row:
+        return error_response("Application not found.", "APPLICATION_NOT_FOUND", 404)
+    server = (server_service.get_server(app_row.hosted_on_server_id)
+              if app_row.hosted_on_server_id else None)
+    return success_response(diagnose_service.diagnose(app_row, server))
+
+
+@bp.get("/<int:application_id>/versions")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR", "APP_OWNER")
+def application_versions(application_id):
+    """Every stored version of this application's monitoring profile (FR-019)."""
+    from app.models.application_version import ApplicationVersion
+
+    app_row = application_service.get_application(application_id)
+    if not app_row:
+        return error_response("Application not found.", "APPLICATION_NOT_FOUND", 404)
+    rows = (ApplicationVersion.query
+            .filter_by(application_id=application_id)
+            .order_by(ApplicationVersion.version.desc())
+            .all())
+    return success_response([r.to_dict() for r in rows])
+
+
+@bp.post("/<int:application_id>/rollback/<int:version>")
+@roles_required("ADMIN", "IT_MANAGER")
+def rollback_application(application_id, version):
+    """Restores a previous version of the profile (FR-019, §19 configuration error).
+
+    Restricted to ADMIN and IT_MANAGER: §18 requires approval for configuration
+    changes, and a rollback is a configuration change like any other - arguably
+    the one most likely to be reached for in a hurry.
+    """
+    app_row = application_service.get_application(application_id)
+    if not app_row:
+        return error_response("Application not found.", "APPLICATION_NOT_FOUND", 404)
+
+    actor_id = int(get_jwt_identity())
+    restored, error = application_service.rollback_application(app_row, version, actor_id)
+    if error:
+        return error_response(error, "VERSION_NOT_FOUND", 404)
+
+    log_activity(actor_id, "APPLICATION_ROLLED_BACK", "Application", app_row.id,
+                 f"Restored {app_row.name} to version {version}.")
+    return success_response(restored.to_dict())

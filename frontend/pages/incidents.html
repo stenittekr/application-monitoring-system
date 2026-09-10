@@ -10,7 +10,8 @@
 </head>
 <body data-page-title="Incidents">
 <div id="amns-page-content">
-    <div class="card border-0 shadow-sm mb-3">
+    <div id="alerting-banner"></div>
+<div class="card border-0 shadow-sm mb-3">
         <div class="card-body">
             <div class="row g-2 align-items-end">
                 <div class="col-md-3">
@@ -50,7 +51,7 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
                     <tr>
-                        <th>Application/Server</th><th>Environment</th><th>Status</th><th>Started</th>
+                        <th>Application/Server</th><th>Environment</th><th>Severity</th><th>Status</th><th>Started</th>
                         <th>Detected</th><th>Resolved</th><th>Duration</th><th>Reason</th>
                         <th>Notification</th><th>Acknowledged</th><th>Assigned</th><th>Actions</th>
                     </tr>
@@ -75,6 +76,62 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" id="assign-confirm-btn">Assign</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="incident-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="incident-modal-title">Incident</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="incident-summary" class="mb-3"></div>
+
+                <h6 class="text-muted small text-uppercase">Investigation notes</h6>
+                <div id="incident-notes" class="mb-3"></div>
+                <div class="input-group input-group-sm mb-4">
+                    <input class="form-control" id="incident-note-input"
+                           placeholder="What did you find, or what did you do?">
+                    <button class="btn btn-outline-secondary" id="incident-note-add">Add note</button>
+                </div>
+
+                <div id="incident-resolve-panel">
+                    <h6 class="text-muted small text-uppercase">Resolve</h6>
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-4">
+                            <label class="form-label small">Cause</label>
+                            <select class="form-select form-select-sm" id="incident-resolve-category">
+                                <option value="">Not stated</option>
+                                <option>Application fault</option>
+                                <option>Dependency failure</option>
+                                <option>Configuration</option>
+                                <option>Network</option>
+                                <option>Planned change</option>
+                                <option>False alarm - monitoring</option>
+                            </select>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label small">Note</label>
+                            <input class="form-control form-control-sm" id="incident-resolve-note">
+                        </div>
+                        <div class="col-md-3 d-grid">
+                            <button class="btn btn-sm btn-primary" id="incident-resolve-btn">Resolve</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="incident-reopen-panel" class="d-none">
+                    <h6 class="text-muted small text-uppercase">Reopen</h6>
+                    <div class="input-group input-group-sm">
+                        <input class="form-control" id="incident-reopen-reason"
+                               placeholder="Why is this not actually fixed?">
+                        <button class="btn btn-outline-danger" id="incident-reopen-btn">Reopen</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

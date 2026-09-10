@@ -3,7 +3,7 @@ import re
 from urllib.parse import urlparse
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-HEALTH_CHECK_TYPES = ("HTTP", "HTTPS", "TCP", "DATABASE")
+HEALTH_CHECK_TYPES = ("HTTP", "HTTPS", "TCP", "DATABASE", "WORKFLOW")
 # Dialects we ship a driver for: pyodbc (MSSQL) and PyMySQL (MySQL/MariaDB).
 DATABASE_BACKENDS = ("mssql", "mysql")
 MATURITY_STATUSES = ("DISCOVERED", "INFORMATION_REQUIRED", "PROFILE_DRAFT", "MONITORED", "MAINTENANCE", "RETIRED")
@@ -79,6 +79,13 @@ def validate_application_payload(data, partial=False):
                 errors.append("URL is required for HTTP/HTTPS health checks.")
             elif not is_valid_url(data.get("url")):
                 errors.append("URL must be a valid HTTP or HTTPS URL.")
+        elif check_type == "WORKFLOW":
+            if not data.get("url"):
+                errors.append("A base URL is required for WORKFLOW checks.")
+            elif not is_valid_url(data.get("url")):
+                errors.append("Base URL must be a valid HTTP or HTTPS URL.")
+            from app.services.workflow_service import validate_workflow
+            errors.extend(validate_workflow(data.get("workflow_steps")))
         elif check_type == "DATABASE":
             error = validate_database_dsn(data.get("url"))
             if error:

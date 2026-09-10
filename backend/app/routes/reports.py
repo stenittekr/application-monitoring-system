@@ -82,3 +82,33 @@ def export_availability():
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=availability_report.csv"},
     )
+
+
+@bp.get("/availability/export.xlsx")
+@roles_required("ADMIN", "IT_MANAGER", "OPERATOR", "AUDITOR")
+def export_availability_xlsx():
+    """Exports the availability report as an Excel workbook (FR-024).
+
+    Carries a second sheet stating the range, the timezone and how each figure
+    was calculated. §17 requires that, and a spreadsheet is exactly where those
+    caveats get separated from the numbers if they are not attached to them.
+    """
+    from datetime import datetime, timezone
+
+    application_id, environment, date_from, date_to = _get_filters()
+    rows = report_service.availability_report(application_id, environment, date_from, date_to)
+    meta = {
+        "Report": "Availability by application",
+        "From": date_from.isoformat(),
+        "To": date_to.isoformat(),
+        "Timezone": "UTC",
+        "Environment filter": environment or "all",
+        "Generated": datetime.now(timezone.utc).isoformat(),
+        "Applications included": len(rows),
+    }
+    workbook = report_service.export_availability_xlsx(rows, meta)
+    return Response(
+        workbook,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=availability_report.xlsx"},
+    )

@@ -13,6 +13,8 @@
     <div class="card border-0 shadow-sm">
         <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
             <span><i class="bi bi-hdd-network me-2"></i>Enrolled Servers</span>
+            <button class="btn btn-sm btn-primary me-2" id="add-machine-btn">
+                <i class="bi bi-plus-lg"></i> Add a machine</button>
             <button class="btn btn-sm btn-outline-secondary" id="refresh-btn"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
         </div>
         <div class="table-responsive">
@@ -20,11 +22,43 @@
                 <thead class="table-light">
                     <tr>
                         <th>Hostname</th><th>IP Address</th><th>OS</th><th>Status</th>
-                        <th>CPU</th><th>RAM</th><th>Disk</th><th>Last Heartbeat</th><th>Last Boot</th><th>Discovered</th>
+                        <th>CPU</th><th>RAM</th><th>Disk</th><th>Last Heartbeat</th><th>Last Boot</th><th>Alerts</th><th>Discovered</th>
                     </tr>
                 </thead>
                 <tbody id="servers-table-body"><tr><td colspan="10" class="text-center text-muted py-4">Loading...</td></tr></tbody>
             </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="add-machine-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add a machine</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <ol class="small mb-3">
+                    <li>Copy the <strong>AMNS-Agent-Installer</strong> folder to the machine.</li>
+                    <li>Right-click <code>Install.bat</code> &rarr; <strong>Run as administrator</strong>.</li>
+                    <li>Paste the token below when it asks.</li>
+                </ol>
+                <label class="form-label small text-uppercase text-muted">Enrolment token</label>
+                <div class="input-group input-group-sm mb-1">
+                    <input class="form-control font-monospace" id="enrol-token" readonly>
+                    <button class="btn btn-outline-primary" id="copy-token-btn">Copy</button>
+                </div>
+                <p class="small text-muted">Expires 8 hours after you signed in. If enrolment
+                   fails, sign in again and copy a fresh one.</p>
+
+                <label class="form-label small text-uppercase text-muted mt-2">
+                    Or run it without prompting</label>
+                <div class="input-group input-group-sm">
+                    <input class="form-control font-monospace" id="enrol-command" readonly>
+                    <button class="btn btn-outline-secondary" id="copy-command-btn">Copy</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -38,13 +72,22 @@
             </div>
             <div class="modal-body">
                 <ul class="nav nav-tabs" role="tablist">
-                    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#discovery-services">Services</button></li>
+                    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#discovery-applications">Applications</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-services">Services</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-ports">Ports</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-processes">Processes</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-programs">Installed Programs</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-tasks">Scheduled Tasks</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-health">Host Health</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-changes">Changes</button></li>
                 </ul>
                 <div class="tab-content pt-3">
-                    <div class="tab-pane fade show active" id="discovery-services">
+                    <div class="tab-pane fade show active" id="discovery-applications">
+                        <div id="discovery-applications-body"></div>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-services">
                         <table class="table table-sm">
-                            <thead><tr><th>Name</th><th>Display Name</th><th>Status</th></tr></thead>
+                            <thead><tr><th style="width:5rem">Monitor</th><th>Name</th><th>Display Name</th><th>Status</th></tr></thead>
                             <tbody id="discovery-services-body"></tbody>
                         </table>
                     </div>
@@ -54,7 +97,47 @@
                             <tbody id="discovery-ports-body"></tbody>
                         </table>
                     </div>
+                    <div class="tab-pane fade" id="discovery-processes">
+                        <div class="form-check form-switch small mb-2">
+                            <input class="form-check-input" type="checkbox" id="discovery-scripts-only" checked>
+                            <label class="form-check-label" for="discovery-scripts-only">
+                                Only scripts (Python, Node, Java, PowerShell)
+                            </label>
+                        </div>
+                        <table class="table table-sm">
+                            <thead><tr><th style="width:5rem">Monitor</th><th>Process</th><th>Script / Module</th><th>PID</th><th>User</th><th class="text-end">Memory</th></tr></thead>
+                            <tbody id="discovery-processes-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-tasks">
+                        <div class="table-responsive"><table class="table table-sm align-middle">
+                            <thead><tr><th>Task</th><th>Status</th><th>Last run</th><th>Result</th><th>Next run</th></tr></thead>
+                            <tbody id="tasks-body"></tbody>
+                        </table></div>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-health">
+                        <div id="health-body"></div>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-changes">
+                        <table class="table table-sm">
+                            <thead><tr><th>When</th><th>Category</th><th>Change</th><th>Item</th><th>Detail</th></tr></thead>
+                            <tbody id="discovery-changes-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-programs">
+                        <input class="form-control form-control-sm mb-2" id="discovery-programs-filter" placeholder="Filter by name or publisher...">
+                        <table class="table table-sm">
+                            <thead><tr><th>Program</th><th>Version</th><th>Publisher</th></tr></thead>
+                            <tbody id="discovery-programs-body"></tbody>
+                        </table>
+                    </div>
                 </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <span class="small text-muted" id="discovery-expected-summary"></span>
+                <button class="btn btn-sm btn-primary" id="discovery-save-expected">
+                    Save monitored components
+                </button>
             </div>
         </div>
     </div>
