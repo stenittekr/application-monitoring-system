@@ -105,11 +105,15 @@ foreach ($name in $services + @("AMNSAgent")) {
 python "$repo\backend\platform_service.py" --startup auto install
 python "$repo\monitoring\monitor_service.py" --startup auto install
 
-foreach ($name in $services) {
+# AMNSAgent is included on purpose: it was stopped above to release the
+# pywin32 host exe, and the first run of this left it stopped - so the machine
+# hosting the platform was the one machine not reporting to it.
+foreach ($name in $services + @("AMNSAgent")) {
+    if (-not (Get-Service $name -ErrorAction SilentlyContinue)) { continue }
     # Three restarts a minute apart. Without this a crashed service stays
     # crashed, which is how PS_QAS went 65 minutes unmonitored.
     sc.exe failure $name reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
-    Start-Service $name
+    Start-Service $name -ErrorAction SilentlyContinue
 }
 
 # --- firewall --------------------------------------------------------------
@@ -124,9 +128,13 @@ if (-not (Get-NetFirewallRule -DisplayName "AMNS Platform" -ErrorAction Silently
 
 Step "Result"
 Get-Service AMNS* | Select-Object Name, Status, StartType | Format-Table -AutoSize
-Write-Host "Platform: http://$env:COMPUTERNAME`:$Port"
+# The DNS name, not $env:COMPUTERNAME - that is the NetBIOS name and truncates
+# at 15 characters, so AWGTC-PORTAL-QAS printed as AWGTC-PORTAL-QA. Agents
+# pointed at the truncated name do not resolve.
+$dnsName = [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName
+Write-Host "Platform: http://$dnsName`:$Port"
 Write-Host "`nStill to do by hand:" -ForegroundColor Yellow
-Write-Host "  1. Repoint each agent's config.json 'api' at $env:COMPUTERNAME (hostname, not IP)"
+Write-Host "  1. Repoint each agent's config.json 'api' at $dnsName (hostname, not IP)"
 Write-Host "  2. Install the watchdog - see DEPLOYMENT.md step 8"
 Write-Host "  3. Change the seeded admin password"
 Write-Host "  4. Stop and remove the services on the old machine"
