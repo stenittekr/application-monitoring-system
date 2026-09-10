@@ -98,3 +98,23 @@ def disk_forecast(server, now=None):
     if days_left <= MAX_FORECAST_DAYS:
         forecast["full_on"] = (now + timedelta(days=days_left)).date().isoformat()
     return forecast
+
+
+def disk_history(server, days=WINDOW_DAYS * 2, now=None):
+    """Readings oldest-first, for drawing the trend the forecast is derived from.
+
+    The forecast is two numbers from the ends of the window. The line is what
+    those numbers hide: a disk that jumped 12% one night and sat still since
+    has the same growth rate as one creeping up daily, and only one of them is
+    something you did.
+    """
+    now = now or datetime.now(timezone.utc)
+    rows = (ServerMetric.query
+            .filter(ServerMetric.server_id == server.id,
+                    ServerMetric.recorded_at >= now - timedelta(days=days))
+            .order_by(ServerMetric.recorded_at.asc())
+            .all())
+    return [{"at": (r.recorded_at if r.recorded_at.tzinfo
+                    else r.recorded_at.replace(tzinfo=timezone.utc)).isoformat(),
+             "percent": r.disk_percent}
+            for r in rows if r.disk_percent is not None]

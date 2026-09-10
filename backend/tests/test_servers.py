@@ -267,3 +267,28 @@ def test_no_expected_components_means_no_checking(db):
         _heartbeat_with(server, services=[("Anything", "stopped")])
     assert server.component_status == []
     assert incident_service.get_active_incident(server_id=server.id, kind="COMPONENT") is None
+
+
+def test_the_agent_reports_which_databases_a_process_is_connected_to(db):
+    """Observed connections, stored and served (FR-011, §8).
+
+    The point is the pid: it is what joins a listening application to the
+    database sockets its own process is holding open.
+    """
+    server, _ = server_service.enroll({"hostname": "DBLINKHOST", "owner_email": "ops@awgtc.com"})
+    server_service.record_heartbeat(server, {
+        "cpu_percent": 5.0, "ram_percent": 40.0, "disk_percent": 50.0,
+        "discovered_ports": [{"port": 3301, "protocol": "TCP", "pid": 4242,
+                              "process_name": "python.exe"}],
+        "database_links": [{"pid": 4242, "process_name": "python.exe", "local_port": 51544,
+                            "remote_host": "162.20.20.250", "remote_port": 1433,
+                            "engine": "SQL Server", "connections": 4}],
+    })
+
+    link = server.to_dict()["database_links"][0]
+    assert link["pid"] == 4242
+    assert link["engine"] == "SQL Server"
+    assert link["remote_port"] == 1433
+    # The listening port and the outbound local port are different things, and
+    # confusing them is what made the first version of this find nothing.
+    assert link["local_port"] != 3301

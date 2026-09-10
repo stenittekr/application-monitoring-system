@@ -266,9 +266,16 @@ def send_server_down_notification(incident, server, error_message):
         # same "Information Required" gap the requirements doc calls for, just not
         # a full workflow yet. Still post to Slack/Teams if configured, skip email.
         logger.warning("Server %s has no owner_email - skipping DOWN email.", server.hostname)
-        _post_webhook(f"*{server.hostname}* is unreachable - {error_message} (no owner assigned yet)")
+        _post_webhook(f"*{server.hostname}* needs attention - {error_message} (no owner assigned yet)")
         return None
-    subject = f"[ALERT] Server Unreachable - {server.hostname}"
+    # The subject has to match what happened. A CPU threshold alert titled
+    # "Server Unreachable" is worse than no alert: the machine was answering
+    # perfectly, and anyone reading the subject goes looking for a dead server.
+    headline = {
+        "RESOURCE": "Server Resource Warning",
+        "COMPONENT": "Server Component Failed",
+    }.get(incident.kind, "Server Unreachable")
+    subject = f"[ALERT] {headline} - {server.hostname}"
     body = (
         f"Server: {server.hostname}\n"
         f"IP Address: {server.ip_address or 'N/A'}\n"
@@ -282,7 +289,7 @@ def send_server_down_notification(incident, server, error_message):
     db.session.add(notification)
     db.session.commit()
     _attempt_send(notification, body)
-    _post_webhook(f"*{server.hostname}* is unreachable - {error_message}")
+    _post_webhook(f"*{server.hostname}*: {error_message}")
     if notification.status == "SENT":
         incident.notification_sent = True
         db.session.commit()
@@ -297,7 +304,13 @@ def send_server_recovery_notification(incident, server):
         logger.warning("Server %s has no owner_email - skipping RECOVERY email.", server.hostname)
         _post_webhook(f"*{server.hostname}* is reachable again (no owner assigned yet)")
         return None
-    subject = f"[RECOVERY] Server Reachable Again - {server.hostname}"
+    # Mirrors the DOWN subject: "Reachable Again" for a CPU alert reads as if
+    # the machine had been off, and the pair has to tell the same story.
+    headline = {
+        "RESOURCE": "Server Resource Back to Normal",
+        "COMPONENT": "Server Component Restored",
+    }.get(incident.kind, "Server Reachable Again")
+    subject = f"[RECOVERY] {headline} - {server.hostname}"
     downtime = incident.duration_seconds or 0
     hours, remainder = divmod(downtime, 3600)
     minutes, seconds = divmod(remainder, 60)

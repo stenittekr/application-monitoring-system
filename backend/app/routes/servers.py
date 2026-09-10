@@ -140,4 +140,5 @@ def server_capacity(server_id):
     if not server:
         return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
     return success_response({"server_id": server.id,
-                             "forecast": capacity_service.disk_forecast(server)})
+                             "forecast": capacity_service.disk_forecast(server),
+                             "history": capacity_service.disk_history(server)})

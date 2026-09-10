@@ -85,6 +85,17 @@ class Server(db.Model):
     scheduled_tasks_json = db.Column(db.Text, nullable=True)
     containers_json = db.Column(db.Text, nullable=True)
     disk_usage_json = db.Column(db.Text, nullable=True)
+
+    # Which local process is connected to which database server, as observed by
+    # the agent's own socket table. A config file states intent; this states
+    # fact, and the two disagree often enough to matter.
+    database_links_json = db.Column(db.Text, nullable=True)
+
+    # Throughput per physical disk, and IIS sites/pools where IIS is installed.
+    disk_io_json = db.Column(db.Text, nullable=True)
+    web_sites_json = db.Column(db.Text, nullable=True)
+    device_inventory_json = db.Column(db.Text, nullable=True)
+    reachability_json = db.Column(db.Text, nullable=True)
     # Set the moment a restart is detected, cleared once the checks that
     # follow one have run. §10 asks for a rapid priority check after a
     # reboot and then the full cycle - a server that has just come back is
@@ -189,6 +200,31 @@ class Server(db.Model):
         hour. If it does, that is what the growth rate is for.
         """
         return json.loads(self.disk_usage_json) if self.disk_usage_json else []
+
+    @property
+    def database_links(self):
+        """Which process here is connected to which database server."""
+        return json.loads(self.database_links_json) if self.database_links_json else []
+
+    @property
+    def disk_io(self):
+        """Cumulative read/write counters per physical disk."""
+        return json.loads(self.disk_io_json) if self.disk_io_json else []
+
+    @property
+    def reachability(self):
+        """DNS, gateway and platform reachability from this machine."""
+        return json.loads(self.reachability_json) if self.reachability_json else {}
+
+    @property
+    def device_inventory(self):
+        """Asset identity - what this machine is, not how it is doing."""
+        return json.loads(self.device_inventory_json) if self.device_inventory_json else {}
+
+    @property
+    def web_sites(self):
+        """IIS sites and application pools, or [] where IIS is not installed."""
+        return json.loads(self.web_sites_json) if self.web_sites_json else []
 
     @property
     def fullest_volume(self):
@@ -343,6 +379,11 @@ class Server(db.Model):
             "hardware": self.hardware,
             "disk_volumes": self.disk_volumes,
             "disk_usage": self.disk_usage,
+            "database_links": self.database_links,
+            "disk_io": self.disk_io,
+            "web_sites": self.web_sites,
+            "device_inventory": self.device_inventory,
+            "reachability": self.reachability,
             "worst_disk_percent": self.worst_disk_percent,
             "fullest_volume": self.fullest_volume,
             "scheduled_tasks": self.scheduled_tasks,

@@ -187,3 +187,24 @@ def test_an_older_agent_falls_back_to_the_system_drive(db, server):
     db.session.commit()
     assert server.worst_disk_percent == 97.0          # not None, and not zero
     assert server_service.resource_flags(server)["disk"] == "CRITICAL"
+
+
+# ---- trend history --------------------------------------------------------
+
+def test_history_comes_back_oldest_first_and_drops_empty_readings(db, server):
+    """The chart draws left to right, so the order is the whole contract."""
+    _readings(db, server, [(3, 80.0), (1, 84.0), (2, 82.0)])
+    db.session.add(ServerMetric(server_id=server.id, disk_percent=None,
+                                recorded_at=datetime.now(timezone.utc)))
+    db.session.commit()
+
+    history = capacity_service.disk_history(server)
+
+    assert [r["percent"] for r in history] == [80.0, 82.0, 84.0]
+    assert all(r["at"] for r in history)
+
+
+def test_history_ignores_readings_older_than_the_window(db, server):
+    _readings(db, server, [(400, 10.0), (2, 82.0)])
+
+    assert [r["percent"] for r in capacity_service.disk_history(server)] == [82.0]
