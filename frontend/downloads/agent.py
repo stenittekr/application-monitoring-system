@@ -32,7 +32,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.16.0"
+AGENT_VERSION = "0.18.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -1279,6 +1279,7 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
     start_database_sampler()
     _keep_rollback_copy()
     while stop_event is None or not stop_event.is_set():
+        cycle_started = time.monotonic()
         api, server_id, token, interval = _reload(config_path, api, server_id, token, interval)
         _flush_queue(api, token, queue_path)
 
@@ -1296,10 +1297,18 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
             print(f"[heartbeat FAILED - queued, will retry next cycle] {message}")
             _queue_failed(queue_path, server_id, metrics)
 
+        # Sleep the remainder of the interval, not the whole of it. Sleeping
+        # `interval` AFTER the work makes the real period interval + work: the
+        # cycle costs a second for cpu_percent alone, more when the disk scan
+        # or the reachability pings run, and heartbeats were arriving up to 66
+        # seconds apart on a 60-second setting. The platform calls a heartbeat
+        # stale at 1.5 intervals, so that drift was walking straight into a
+        # "No fresh data" badge on a perfectly healthy machine.
+        remaining = max(1.0, interval - (time.monotonic() - cycle_started))
         if stop_event is not None:
-            stop_event.wait(interval)
+            stop_event.wait(remaining)
         else:
-            time.sleep(interval)
+            time.sleep(remaining)
 
 
 def run_from_config(config_path=agent_config.DEFAULT_CONFIG_PATH, stop_event=None):

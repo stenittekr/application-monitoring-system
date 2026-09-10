@@ -12,7 +12,12 @@ DEFAULT_CONFIG_PATH = r"C:\ProgramData\AMNS-Agent\config.json"
 
 
 def load_config(path=DEFAULT_CONFIG_PATH):
-    with open(path, "r", encoding="utf-8") as f:
+    # utf-8-sig, not utf-8: anyone who edits this file with PowerShell or
+    # Notepad writes a UTF-8 BOM at the front, json.load rejects it, and the
+    # agent dies at startup with the service reporting only "failed to start".
+    # Reading it as utf-8-sig strips the BOM if present and is identical
+    # otherwise. Across 200 machines this file will be hand-edited.
+    with open(path, "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 

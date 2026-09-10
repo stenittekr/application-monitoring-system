@@ -589,6 +589,42 @@
                 + (link.open_now ? "" : ` (${Math.round((link.seconds_since_seen || 0) / 60)}m ago)`));
     }
 
+    // One click from "discovered" to "monitored". Discovery has always found
+    // these; registering one meant retyping the address into a form, which is
+    // why PS_QAS ran four applications with one of them monitored.
+    //
+    // Deliberately no content rule: only a person knows what the page should
+    // say, and a check that only proves "something answered" is honest about
+    // being incomplete. The application's own edit form asks for it.
+    document.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-monitor-port]");
+        if (!button) return;
+        const server = servers.find((s) => s.id === Number(button.dataset.monitorServer));
+        if (!server) return;
+        button.disabled = true;
+        try {
+            const user = getCurrentUser();
+            await api.post("/applications", {
+                name: `${button.dataset.monitorName} (${server.hostname}:${button.dataset.monitorPort})`,
+                url: `http://${server.hostname}:${button.dataset.monitorPort}`,
+                health_check_type: "HTTP",
+                environment: server.environment || "QA",
+                owner_name: user.name, owner_email: user.email,
+                manager_name: user.name, manager_email: user.email,
+                monitoring_enabled: true, monitoring_interval: 900, timeout: 10,
+                retry_count: 3, retry_delay: 5, expected_status_code: 200,
+                hosted_on_server_id: server.id,
+            });
+            showToast("Now monitored. Add a content rule so a maintenance page cannot pass.");
+            allApplications = null;          // force a refetch
+            await renderApplications(server);
+            await load();
+        } catch (err) {
+            button.disabled = false;
+            showError(err);
+        }
+    });
+
     // Programs listening here that nobody registered as an application.
     //
     // The gap this closes: PS_QAS runs four Python applications and one was
@@ -604,6 +640,10 @@
             // service: svchost has no script, app.py does.
             if (!proc || !proc.script || claimed.has(Number(port))) return;
             const databases = databasesForPid(server, pid);
+            // Named from the folder the script lives in, which is what people
+            // call these things - "DMS", not "app.py".
+            const parts = proc.script.replace(/\//g, "\\").split("\\");
+            const suggested = parts.length > 1 ? parts[parts.length - 2] : proc.script;
             rows.push(`<tr>
                 <td class="small"><code>${escapeHtml(proc.script)}</code></td>
                 <td class="small">${escapeHtml(server.hostname)}:${port}</td>
@@ -611,6 +651,9 @@
                     ? databases.map((d) => `<div><code>${escapeHtml(d)}</code></div>`).join("")
                     : '<span class="text-muted">none observed</span>'}</td>
                 <td class="small text-muted">pid ${pid}</td>
+                <td class="text-end"><button class="btn btn-sm btn-outline-primary"
+                        data-monitor-port="${port}" data-monitor-name="${escapeHtml(suggested)}"
+                        data-monitor-server="${server.id}">Monitor</button></td>
             </tr>`);
         });
         if (!rows.length) return "";
@@ -619,7 +662,8 @@
             <p class="small text-muted mb-2">Nothing checks these, so nothing would notice them
                stopping. Add one from the Applications page to change that.</p>
             <table class="table table-sm mb-0">
-                <thead><tr><th>Program</th><th>Address</th><th>Database</th><th></th></tr></thead>
+                <thead><tr><th>Program</th><th>Address</th><th>Database</th><th></th>
+                           <th></th></tr></thead>
                 <tbody>${rows.join("")}</tbody></table></div>`;
     }
 

@@ -256,6 +256,15 @@
     // affects, and repeated what the table below already said.
     function renderAppTiles(apps) {
         const host = document.getElementById("app-tiles");
+
+        // Grouping by machine needs the machine list, and APP_OWNER is not
+        // allowed to see it - so the headings came out as "Unknown server",
+        // which is worse than no grouping. The table below shows everything
+        // either way.
+        if (!(window.__servers || []).length) {
+            host.innerHTML = "";
+            return;
+        }
         const groups = new Map();
         apps.forEach((app) => {
             const key = app.hosted_on_server_id || 0;
