@@ -41,35 +41,78 @@ if errorlevel 1 (
     goto :fail
 )
 
-REM --- Python, installed silently if this folder carries the installer --------
-REM A normal user's PC does not have Python, and telling 200 people to install
-REM it first is how a rollout stalls. Drop the official installer into this
-REM folder as python-setup.exe and the agent brings its own runtime.
-python --version >nul 2>&1
-if errorlevel 1 (
-    if exist "%~dp0python-setup.exe" (
-        echo  [..] Python not found - installing it, this takes a few minutes ...
-        REM InstallAllUsers so the LocalSystem service can see it; PrependPath
-        REM so "python" resolves; Test/Doc/tcltk skipped, nothing here needs them.
-        "%~dp0python-setup.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_test=0 Include_doc=0 Include_tcltk=0
-        REM PrependPath only affects new processes, so this one has to be told.
-        for /d %%d in ("C:\Program Files\Python3*") do set "PATH=%%d;%%d\Scripts;!PATH!"
-        python --version >nul 2>&1
-        if errorlevel 1 (
-            echo  [X] Python installed but is still not on PATH.
-            echo      Restart this machine and run Install.bat again.
-            goto :fail
-        )
-    ) else (
-        echo  [X] Python is not installed on this machine.
-        echo.
-        echo      Either install Python 3.10+ from python.org, ticking
-        echo      "Add python.exe to PATH" - or ask IT for the installer
-        echo      package that includes it.
-        goto :fail
+REM --- Python -----------------------------------------------------------------
+REM Not "is python on PATH". Windows ships an App Execution Alias in
+REM %LOCALAPPDATA%\Microsoft\WindowsApps that looks like Python, exits with
+REM code 0, and prints an error instead of running - and from an elevated
+REM prompt it fails with 0x80070005 because the Store app is per-user. That
+REM stub passed a naive check on AMS-IT-312 and every later step quietly did
+REM nothing. So: find a real interpreter, prove it runs, and then use its full
+REM path rather than trusting PATH again.
+set "PY="
+REM Globbed, not a version list: this missed C:\Python314 when the list stopped
+REM at 313. Only all-users locations - a Python under a user profile cannot be
+REM read by the LocalSystem service that has to run the agent, so finding one
+REM there is worse than finding none.
+for /d %%d in ("C:\Python3*") do (
+    if not defined PY if exist "%%~d\python.exe" set "PY=%%~d\python.exe"
+)
+if not defined PY for /d %%d in ("C:\Program Files\Python3*") do (
+    if not defined PY if exist "%%~d\python.exe" set "PY=%%~d\python.exe"
+)
+
+REM Prove it: the stub returns 0, so the only reliable test is whether the
+REM expected output actually comes back.
+REM
+REM Via a temp file, not for/f. `for /f ... in ('"!PY!" -c "print(1)"')`
+REM breaks on the nested quotes and reports failure on a machine that has a
+REM perfectly good Python - which is exactly how this check first went wrong.
+set "PYOK="
+set "PROBE=%TEMP%\probe-python.txt"
+if defined PY (
+    "!PY!" -c "print(4567)" > "!PROBE!" 2>nul
+    if exist "!PROBE!" (
+        set /p PROBED=<"!PROBE!"
+        if "!PROBED!"=="4567" set "PYOK=1"
+        del "!PROBE!" >nul 2>&1
     )
 )
-for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo  [OK] %%v
+
+if not defined PYOK (
+    if exist "%~dp0python-setup.exe" (
+        echo  [..] No usable Python found - installing it. This takes a few minutes ...
+        echo %TIME%  installing bundled python >> "%LOG%"
+        "%~dp0python-setup.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_test=0 Include_doc=0 Include_tcltk=0
+        set "PY="
+        for /d %%d in ("C:\Program Files\Python3*") do (
+            if not defined PY if exist "%%~d\python.exe" set "PY=%%~d\python.exe"
+        )
+        if defined PY (
+            "!PY!" -c "print(4567)" > "!PROBE!" 2>nul
+            if exist "!PROBE!" (
+                set /p PROBED=<"!PROBE!"
+                if "!PROBED!"=="4567" set "PYOK=1"
+                del "!PROBE!" >nul 2>&1
+            )
+        )
+    )
+)
+
+if not defined PYOK (
+    echo  [X] No working Python on this machine.
+    echo.
+    echo      A Microsoft Store stub named python.exe does not count - it
+    echo      cannot run elevated. Install Python 3.10+ from python.org,
+    echo      ticking "Add python.exe to PATH", then run this again.
+    echo %TIME%  no usable python >> "%LOG%"
+    goto :fail
+)
+"!PY!" --version > "!PROBE!" 2>&1
+set /p PYVER=<"!PROBE!"
+del "!PROBE!" >nul 2>&1
+echo  [OK] !PYVER!
+echo  [OK] using !PY!
+echo %TIME%  python: !PY! >> "%LOG%"
 
 if not exist "agent.py" (
     echo  [X] agent.py is not in this folder. Copy the whole folder, not just this file.
@@ -80,9 +123,8 @@ for /f "tokens=3 delims== " %%v in ('findstr /c:"AGENT_VERSION =" agent.py') do 
 set "TOKEN=%~1"
 if "%TOKEN%"=="" (
     echo.
-    echo  An admin token is needed once, to enrol this machine.
-    echo  Get one: log in to the platform as ADMIN, press F12,
-    echo  Application -^> Local Storage -^> copy "access_token".
+    echo  A token is needed once, to enrol this machine.
+    echo  Get one from the platform: Servers -^> "Add a machine" -^> Copy.
     echo.
     set /p "TOKEN=Paste the admin token: "
 )
@@ -108,7 +150,7 @@ REM --find-links prefers wheels shipped beside this file and is harmless when
 REM there are none. That is the escape hatch for a machine whose proxy blocks
 REM PyPI: run  pip download -r requirements.txt -d wheels  somewhere that can
 REM reach it, drop the folder in here, and the install needs no internet.
-python -m pip install --no-user --find-links "%~dp0wheels" -r requirements.txt >> "%LOG%" 2>&1
+"!PY!" -m pip install --no-user --find-links "%~dp0wheels" -r requirements.txt >> "%LOG%" 2>&1
 if errorlevel 1 (
     echo  [X] pip install failed. Check this machine can reach the package index,
     echo      or install psutil/requests/pywin32 by hand and re-run.
@@ -117,18 +159,24 @@ if errorlevel 1 (
 
 echo  Enrolling ...
 echo %TIME%  enrol >> "%LOG%"
-python agent.py enroll --admin-token "!TOKEN!" --api "http://%PLATFORM%/api" >> "%LOG%" 2>&1
+"!PY!" agent.py enroll --admin-token "!TOKEN!" --api "http://%PLATFORM%/api" >> "%LOG%" 2>&1
 if errorlevel 1 (
     echo  [X] Enrolment failed.
     echo      Either the token expired - log in again for a fresh one -
     echo      or this machine cannot reach %PLATFORM%.
     goto :fail
 )
+REM Belt and braces: enrolment writing the config is the proof it worked.
+if not exist "C:\ProgramData\AMNS-Agent\config.json" (
+    echo  [X] Enrolment reported success but wrote no configuration.
+    echo      See %LOG%
+    goto :fail
+)
 
 echo  Registering the Windows service ...
 echo %TIME%  service install >> "%LOG%"
-python agent_service.py --startup auto install >> "%LOG%" 2>&1
-python agent_service.py start >> "%LOG%" 2>&1
+"!PY!" agent_service.py --startup auto install >> "%LOG%" 2>&1
+"!PY!" agent_service.py start >> "%LOG%" 2>&1
 REM Three restarts a minute apart. Without this a crashed agent stays crashed,
 REM and the machine is unmonitored until somebody notices.
 sc.exe failure AMNSAgent reset= 86400 actions= restart/60000/restart/60000/restart/60000 >nul
