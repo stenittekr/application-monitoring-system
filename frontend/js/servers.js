@@ -35,9 +35,49 @@
 
     let servers = [];
     document.getElementById("refresh-btn").addEventListener("click", load);
+
+    // The enrolment token, on the page. It was previously "press F12, open
+    // Application, find sessionStorage, copy amns_token" - a real instruction
+    // given to real people, and the wrong storage was named in the handout.
+    // Nobody should be in developer tools to install an agent.
+    document.getElementById("add-machine-btn").addEventListener("click", () => {
+        const token = getToken() || "";
+        document.getElementById("enrol-token").value = token;
+        document.getElementById("enrol-command").value =
+            `Install.bat ${token} ${window.location.host}`;
+        new bootstrap.Modal(document.getElementById("add-machine-modal")).show();
+    });
+
+    async function copyField(fieldId, button) {
+        const field = document.getElementById(fieldId);
+        try {
+            await navigator.clipboard.writeText(field.value);
+        } catch (err) {
+            // http:// pages outside localhost get no clipboard API, so fall
+            // back to selecting the text for a manual Ctrl+C rather than
+            // failing silently.
+            field.select();
+            document.execCommand("copy");
+        }
+        const was = button.textContent;
+        button.textContent = "Copied";
+        setTimeout(() => { button.textContent = was; }, 1500);
+    }
+
+    document.getElementById("copy-token-btn").addEventListener("click", (e) =>
+        copyField("enrol-token", e.target));
+    document.getElementById("copy-command-btn").addEventListener("click", (e) =>
+        copyField("enrol-command", e.target));
     document.getElementById("servers-table-body").addEventListener("click", onTableClick);
 
     load();
+
+    // Agents heartbeat every 60s, so polling faster only redraws the same rows.
+    // Held while a dialog is open: the components dialog is a list of ticks
+    // someone is part-way through, and a reload underneath it loses them.
+    setInterval(() => {
+        if (!document.querySelector(".modal.show")) load();
+    }, 30000);
 
     // Fetches the enrolled server list and renders the table.
     // Changed in place rather than behind a form: it is one choice, and the
@@ -147,6 +187,12 @@
     // Section 8 asks for per-core CPU, network errors and drops, hardware
     // readings and every volume - and is explicit that where a machine exposes
     // none of it the answer is "Not available", never a comfortable zero.
+    function gb(bytes) {
+        if (bytes === null || bytes === undefined) return "-";
+        return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+                                  : `${Math.round(bytes / 1024 ** 2)} MB`;
+    }
+
     function notAvailable(why) {
         return `<div class="text-muted small py-2">Not available &mdash; ${escapeHtml(why)}</div>`;
     }
@@ -210,6 +256,77 @@
               }).join("")
             : notAvailable("this agent does not measure folder sizes (needs v0.8.0)");
 
+        // Cumulative counters, shown as totals rather than rates: two heartbeats
+        // are needed for a rate and this panel has one sample. Busy time is the
+        // number worth reading - a disk at its limit makes everything slow while
+        // CPU, RAM and free space all look fine.
+        const diskIo = server.disk_io || [];
+        const diskIoHtml = diskIo.length
+            ? `<table class="table table-sm mb-0"><tbody>${diskIo.map((d) => `<tr>
+                    <td class="small"><code>${escapeHtml(d.disk)}</code></td>
+                    <td class="small text-end">${gb(d.read_bytes)} read</td>
+                    <td class="small text-end">${gb(d.write_bytes)} written</td>
+                    <td class="small text-end text-muted">${d.busy_ms === null || d.busy_ms === undefined
+                        ? "busy n/a" : `${Math.round(d.busy_ms / 1000)}s busy`}</td>
+                </tr>`).join("")}</tbody></table>`
+            : notAvailable("this agent does not report disk throughput (needs v0.13.0)");
+
+        // Three different owners, told apart. "Cannot reach the application"
+        // is a name that will not resolve, a gateway that is gone, or a lossy
+        // path - and a dashboard that cannot say which sends the wrong person.
+        const reach = server.reachability || {};
+        const mark = (ok) => ok === null || ok === undefined
+            ? '<i class="bi bi-dash-circle text-muted me-1"></i>'
+            : (ok ? '<i class="bi bi-check-circle-fill text-success me-1"></i>'
+                  : '<i class="bi bi-x-circle-fill text-danger me-1"></i>');
+        const loss = (value) => value === null || value === undefined ? "" :
+            (value > 0 ? ` <span class="text-danger">${value}% loss</span>` : " 0% loss");
+        const reachHtml = Object.keys(reach).length
+            ? `<div class="small">${mark(reach.gateway_reachable)}Gateway
+                   <code>${escapeHtml(reach.gateway || "unknown")}</code>
+                   ${reach.gateway_latency_ms !== null && reach.gateway_latency_ms !== undefined
+                       ? `${reach.gateway_latency_ms} ms` : ""}${loss(reach.gateway_packet_loss_percent)}</div>
+               <div class="small">${mark(reach.dns_ok)}DNS
+                   <code>${escapeHtml(reach.dns_host || "-")}</code>
+                   ${reach.dns_ok ? `${reach.dns_ms} ms`
+                       : `<span class="text-danger">${escapeHtml(reach.dns_error || "did not resolve")}</span>`}</div>
+               <div class="small">${mark(reach.platform_packet_loss_percent === 0)}Path to the platform
+                   ${reach.platform_latency_ms !== null && reach.platform_latency_ms !== undefined
+                       ? `${reach.platform_latency_ms} ms` : ""}${loss(reach.platform_packet_loss_percent)}</div>`
+            : notAvailable("this agent does not test DNS or gateway reachability (needs v0.16.0)");
+
+        const sites = server.web_sites || [];
+        const sitesHtml = sites.length
+            ? sites.map((site) => `<div class="small">
+                    <span class="badge bg-light text-dark border">${escapeHtml(site.kind)}</span>
+                    ${escapeHtml(site.name)}
+                    <span class="${site.state === "Started" ? "text-success" : "text-danger"}">
+                        ${escapeHtml(site.state || "?")}</span>
+                    ${site.bindings ? `<code class="text-muted">${escapeHtml(site.bindings)}</code>` : ""}
+                </div>`).join("")
+            : notAvailable("IIS is not installed here, or this agent predates v0.13.0");
+
+        // What the machine IS, as an asset register would record it - the same
+        // fields Windows shows under Settings > System > About, so a row here
+        // can be matched against a machine by anyone reading its screen.
+        const inv = server.device_inventory || {};
+        const invRows = [
+            ["Full device name", inv.fqdn],
+            ["Device ID", inv.device_id],
+            ["Product ID", inv.product_id],
+            ["Manufacturer / model", [inv.manufacturer, inv.model].filter(Boolean).join(" ")],
+            ["Serial number", inv.serial_number],
+            ["BIOS", inv.bios_version],
+            ["Processor", inv.cpu_model],
+            ["Installed RAM", inv.ram_total_mb ? `${(inv.ram_total_mb / 1024).toFixed(1)} GB` : null],
+            ["System type", inv.system_type],
+        ].filter(([, value]) => value);
+        const inventoryHtml = invRows.length
+            ? `<table class="table table-sm mb-0"><tbody>${invRows.map(([label, value]) =>
+                `<tr><th class="small" style="width:12rem">${label}</th>
+                     <td class="small">${escapeHtml(String(value))}</td></tr>`).join("")}</tbody></table>`
+            : notAvailable("this agent does not report device inventory (needs v0.15.0)");
+
         const hw = server.hardware || {};
         const hwParts = [];
         if (hw.temperature_c !== undefined) hwParts.push(`Temperature ${hw.temperature_c} &deg;C`);
@@ -238,6 +355,27 @@
                        ${ah.agent_memory_mb || "?"} MB &middot; ${ah.agent_cpu_percent || 0}% CPU</div>
                </div>`;
 
+        // §7.1 as observed, not as claimed. A tick here means this machine is
+        // actually configured that way; a cross means it is not, however the
+        // documentation reads.
+        const svc = ah.service || {};
+        const yes = (ok, label, warn) => ok
+            ? `<div class="small"><i class="bi bi-check-circle-fill text-success me-1"></i>${label}</div>`
+            : `<div class="small"><i class="bi bi-x-circle-fill text-danger me-1"></i>${escapeHtml(warn || label)}</div>`;
+        const lifecycleHtml = Object.keys(svc).length
+            ? `${yes(svc.start_type === "AUTO_START", "Starts automatically after reboot",
+                     `Start type is ${svc.start_type || "unknown"} - will not return after a reboot`)}
+               ${yes(svc.auto_restart_on_failure, "Restarts itself if it crashes",
+                     "No crash recovery - a crash leaves this machine unmonitored")}
+               ${yes(svc.rollback_available, `Rollback available${
+                     (svc.previous_versions || []).length ? ` (${escapeHtml(svc.previous_versions.join(", "))})` : ""}`,
+                     "No previous version kept - a bad update cannot be rolled back")}
+               ${yes(svc.uninstall_protected, "Uninstall protected",
+                     "Any local administrator can remove the agent")}
+               <div class="small text-muted mt-1">Runs as <code>${escapeHtml(svc.run_as || "?")}</code></div>
+               <div class="small text-muted text-break"><code>${escapeHtml(svc.install_dir || "?")}</code></div>`
+            : notAvailable("this agent does not report how it is installed (needs v0.14.0)");
+
         const skew = server.clock_skew_seconds;
         const clockHtml = skew === null || skew === undefined
             ? notAvailable("this agent does not report its clock (needs v0.7.0)")
@@ -256,13 +394,19 @@
             <div class="row g-3">
                 <div class="col-md-6"><h6 class="small text-uppercase text-muted">CPU per core</h6>${coresHtml}</div>
                 <div class="col-md-6"><h6 class="small text-uppercase text-muted">Volumes</h6>${volumesHtml}
-                    <div id="capacity-forecast" class="small mt-2 text-muted">Checking growth rate&hellip;</div></div>
+                    <div id="capacity-trend" class="mt-2"></div>
+                    <div id="capacity-forecast" class="small text-muted">Checking growth rate&hellip;</div></div>
                 <div class="col-12"><h6 class="small text-uppercase text-muted">What is using the space</h6>${usageHtml}</div>
+                <div class="col-12"><h6 class="small text-uppercase text-muted">Device</h6>${inventoryHtml}</div>
+                <div class="col-12"><h6 class="small text-uppercase text-muted">Disk throughput</h6>${diskIoHtml}</div>
+                <div class="col-md-6"><h6 class="small text-uppercase text-muted">Reachability</h6>${reachHtml}</div>
                 <div class="col-12"><h6 class="small text-uppercase text-muted">Network</h6>${nicsHtml}</div>
+                <div class="col-md-6"><h6 class="small text-uppercase text-muted">IIS sites &amp; pools</h6>${sitesHtml}</div>
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Hardware</h6>${hwHtml}</div>
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Clock</h6>${clockHtml}</div>
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Containers</h6>${containersHtml}</div>
                 <div class="col-md-4"><h6 class="small text-uppercase text-muted">Agent</h6>${agentHtml}</div>
+                <div class="col-md-8"><h6 class="small text-uppercase text-muted">Agent lifecycle</h6>${lifecycleHtml}</div>
             </div>`;
 
         loadForecast(server.id);
@@ -275,6 +419,7 @@
         if (!box) return;
         try {
             const data = await api.get(`/servers/${serverId}/capacity`);
+            renderTrend(data.history || []);
             const f = data.forecast;
             if (!f) {
                 box.textContent = "Not enough history yet to estimate a growth rate.";
@@ -285,13 +430,55 @@
                 box.textContent = `Growing ${rate}% a day over ${f.observed_days} days - no date worth quoting.`;
                 return;
             }
-            const tone = f.days_until_full < 30 ? "text-danger" : f.days_until_full < 90 ? "text-warning" : "text-muted";
-            box.className = `small mt-2 ${tone}`;
+            // A week of readings before this is allowed to alarm anyone. Below
+            // that a single overnight jump divided by two days reads as a
+            // trend, and the chart above it plainly shows a flat line.
+            const trusted = f.observed_days >= 7;
+            const tone = !trusted ? "text-muted"
+                : f.days_until_full < 30 ? "text-danger"
+                : f.days_until_full < 90 ? "text-warning" : "text-muted";
+            box.className = `small ${tone}`;
             box.textContent = `Growing ${rate}% a day. Full in about ${f.days_until_full} days`
-                + (f.full_on ? ` (around ${f.full_on})` : "") + `, from ${f.observed_days} days of readings.`;
+                + (f.full_on ? ` (around ${f.full_on})` : "")
+                + `, from ${f.observed_days} days of readings.`
+                + (trusted ? "" : " Too little history to rely on - watch the line, not the date.");
         } catch (err) {
             box.textContent = "Growth rate unavailable.";
         }
+    }
+
+    // Drawn as inline SVG on purpose - one series, one axis, no interaction.
+    // A charting library is 200KB and another CDN origin for what a polyline
+    // already says.
+    function renderTrend(history) {
+        const box = document.getElementById("capacity-trend");
+        if (!box) return;
+        if (history.length < 2) { box.innerHTML = ""; return; }
+
+        const W = 300, H = 60;
+        // Fixed 0-100, never scaled to the data. Auto-scaling turns a disk that
+        // wobbled by half a percent into a cliff, which is how a trend chart
+        // starts lying.
+        const y = (v) => H - (Math.max(0, Math.min(100, v)) / 100) * H;
+        const pts = history.map((r, i) =>
+            `${(i / (history.length - 1)) * W},${y(r.percent).toFixed(1)}`).join(" ");
+        const first = history[0], last = history[history.length - 1];
+        const day = (iso) => new Date(iso).toLocaleDateString(undefined,
+            { day: "numeric", month: "short" });
+
+        box.innerHTML = `
+            <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img"
+                 aria-label="Disk usage from ${escapeHtml(day(first.at))} to ${escapeHtml(day(last.at))},
+                             ${first.percent}% to ${last.percent}%"
+                 style="max-width:${W}px">
+                <polyline points="0,${H} ${pts} ${W},${H}" fill="rgba(13,110,253,.12)" stroke="none"/>
+                <polyline points="${pts}" fill="none" stroke="#0d6efd" stroke-width="1.5"
+                          stroke-linejoin="round"/>
+            </svg>
+            <div class="small text-muted d-flex justify-content-between" style="max-width:${W}px">
+                <span>${escapeHtml(day(first.at))} &middot; ${first.percent}%</span>
+                <span>${escapeHtml(day(last.at))} &middot; ${last.percent}%</span>
+            </div>`;
     }
 
     function renderScheduledTasks(server) {
@@ -358,6 +545,153 @@
             ? `${problems.length} of ${server.component_status.length} monitored component(s) not OK: `
               + problems.map((c) => `${c.name} ${c.state}`).join(", ")
             : `All ${server.component_status.length} monitored component(s) OK.`;
+    }
+
+    // What actually runs here, and what it talks to. The server tabs answered
+    // "which services and processes exist" but never "which of our applications
+    // is this machine responsible for" - which is the question asked when the
+    // disk fills or the box needs rebooting.
+    //
+    // The application list is fetched whole and filtered here rather than added
+    // as another endpoint: /applications is already the one the rest of the app
+    // uses, and nine rows do not need a query.
+    let allApplications = null;
+
+    // The chain that answers "what is this, and what does it talk to":
+    //   listening port -> owning pid -> that pid's script, and its database
+    //   connections.
+    //
+    // Via the pid, not the port: the local port on an *outbound* connection is
+    // an ephemeral one the OS picked, and matching it against the application's
+    // listening port finds nothing at all.
+    function programIndex(server) {
+        const byPort = {};
+        const scriptByPid = {};
+        (server.discovered_processes || []).forEach((proc) => {
+            if (proc.pid) scriptByPid[proc.pid] = proc;
+        });
+        (server.discovered_ports || []).forEach((row) => {
+            if (row.protocol === "TCP" && row.pid && byPort[row.port] === undefined) {
+                byPort[row.port] = row.pid;
+            }
+        });
+        return { byPort, scriptByPid };
+    }
+
+    function portOf(app) {
+        return app.port || Number((app.url || "").match(/:(\d+)/)?.[1]) || null;
+    }
+
+    function databasesForPid(server, pid) {
+        return (server.database_links || [])
+            .filter((link) => link.pid === pid)
+            .map((link) => `${link.engine} ${link.remote_host}:${link.remote_port}`
+                + (link.open_now ? "" : ` (${Math.round((link.seconds_since_seen || 0) / 60)}m ago)`));
+    }
+
+    // Programs listening here that nobody registered as an application.
+    //
+    // The gap this closes: PS_QAS runs four Python applications and one was
+    // recorded, so three could have died unnoticed. The agent has always known
+    // about them - nothing was reading the list and asking what was missing.
+    function unregisteredHtml(server, registered) {
+        const { byPort, scriptByPid } = programIndex(server);
+        const claimed = new Set(registered.map(portOf).filter(Boolean));
+        const rows = [];
+        Object.entries(byPort).forEach(([port, pid]) => {
+            const proc = scriptByPid[pid];
+            // A script path is what separates an application from a Windows
+            // service: svchost has no script, app.py does.
+            if (!proc || !proc.script || claimed.has(Number(port))) return;
+            const databases = databasesForPid(server, pid);
+            rows.push(`<tr>
+                <td class="small"><code>${escapeHtml(proc.script)}</code></td>
+                <td class="small">${escapeHtml(server.hostname)}:${port}</td>
+                <td class="small">${databases.length
+                    ? databases.map((d) => `<div><code>${escapeHtml(d)}</code></div>`).join("")
+                    : '<span class="text-muted">none observed</span>'}</td>
+                <td class="small text-muted">pid ${pid}</td>
+            </tr>`);
+        });
+        if (!rows.length) return "";
+        return `<div class="mt-4">
+            <h6 class="small text-uppercase text-muted">Listening here but not monitored</h6>
+            <p class="small text-muted mb-2">Nothing checks these, so nothing would notice them
+               stopping. Add one from the Applications page to change that.</p>
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Program</th><th>Address</th><th>Database</th><th></th></tr></thead>
+                <tbody>${rows.join("")}</tbody></table></div>`;
+    }
+
+    async function renderApplications(server) {
+        const box = document.getElementById("discovery-applications-body");
+        if (!box) return;
+        box.innerHTML = '<div class="small text-muted">Loading&hellip;</div>';
+        try {
+            if (!allApplications) allApplications = await api.get("/applications");
+            const byId = {};
+            allApplications.forEach((a) => { byId[a.id] = a; });
+            const here = allApplications.filter((a) => a.hosted_on_server_id === server.id);
+
+            if (!here.length) {
+                box.innerHTML = notAvailable(
+                    "no applications are recorded as hosted here - set \"Hosted on\" when "
+                    + "editing an application, and its failures will be corroborated against "
+                    + "this server's agent before anyone is alerted");
+                return;
+            }
+
+            const { byPort, scriptByPid } = programIndex(server);
+
+            const rows = here.map((app) => {
+                const port = portOf(app);
+                const pid = port ? byPort[port] : null;
+                const program = pid && scriptByPid[pid]
+                    ? `<code class="small">${escapeHtml(scriptByPid[pid].script || scriptByPid[pid].name)}</code>`
+                      + `<div class="text-muted small">pid ${pid}`
+                      + (scriptByPid[pid].memory_mb ? ` &middot; ${scriptByPid[pid].memory_mb} MB` : "")
+                      + `</div>`
+                    : '<span class="text-muted">-</span>';
+                // A DATABASE check IS the database; anything else reaches one
+                // through a recorded dependency. Both are worth showing, because
+                // "which database does this application use" is the question and
+                // the answer lives in two different places.
+                // Three sources, best first: what the agent watched this
+                // application connect to, then a recorded dependency, then the
+                // check's own target when the check IS a database. Observed
+                // beats declared - a config file says what was intended.
+                const observed = pid ? databasesForPid(server, pid) : [];
+                const declared = app.health_check_type === "DATABASE"
+                    ? [app.url]
+                    : (app.depends_on || [])
+                        .map((id) => byId[id])
+                        .filter((dep) => dep && dep.health_check_type === "DATABASE")
+                        .map((dep) => `${dep.name} - ${dep.url}`);
+                const databases = observed.length ? observed : declared;
+                const target = app.health_check_type === "TCP"
+                    ? `${escapeHtml(app.server || "")}:${app.port || ""}`
+                    : `<code class="small">${escapeHtml(app.url || "-")}</code>`;
+                return `<tr>
+                    <td>${escapeHtml(app.name)}</td>
+                    <td>${statusBadge(app.current_status)}</td>
+                    <td class="small">${escapeHtml(app.health_check_type)}</td>
+                    <td class="small">${target}</td>
+                    <td>${program}</td>
+                    <td class="small">${databases.length
+                        ? databases.map((d) => `<div><code>${escapeHtml(d)}</code></div>`).join("")
+                        : '<span class="text-muted">not recorded</span>'}</td>
+                    <td class="small">${escapeHtml(app.environment || "-")}</td>
+                </tr>`;
+            }).join("");
+
+            box.innerHTML = `<table class="table table-sm mb-0">
+                <thead><tr><th>Application</th><th>Status</th><th>Check</th><th>Target</th>
+                           <th>Program</th><th>Database</th><th>Environment</th></tr></thead>
+                <tbody>${rows}</tbody></table>
+                ${unregisteredHtml(server, here)}`;
+        } catch (err) {
+            box.innerHTML = notAvailable("could not load the application list");
+        }
     }
 
     function openDiscoveryModal(server) {
@@ -457,6 +791,7 @@
 
         renderScheduledTasks(server);
         renderHostHealth(server);
+        renderApplications(server);
         new bootstrap.Modal(document.getElementById("discovery-modal")).show();
     }
 })();

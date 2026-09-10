@@ -20,6 +20,7 @@
             <span class="small text-muted me-1"><i class="bi bi-funnel"></i> Filter</span>
             <select class="form-select form-select-sm w-auto" id="filter-status"></select>
             <select class="form-select form-select-sm w-auto" id="filter-environment"></select>
+            <select class="form-select form-select-sm w-auto" id="filter-server"></select>
             <select class="form-select form-select-sm w-auto" id="filter-criticality"></select>
             <select class="form-select form-select-sm w-auto" id="filter-site"></select>
             <select class="form-select form-select-sm w-auto" id="filter-owner"></select>
@@ -38,7 +39,6 @@
                 <a class="btn btn-sm btn-outline-secondary" href="wallboard.html" target="_blank" rel="noopener" title="Open a clean, auto-refreshing view for a TV or wallboard">
                     <i class="bi bi-tv"></i> Wallboard
                 </a>
-                <button class="btn btn-sm btn-primary d-none" id="new-app-btn"><i class="bi bi-plus-lg"></i> New Application</button>
                 <button class="btn btn-sm btn-outline-primary" id="refresh-btn"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
             </div>
         </div>
@@ -63,29 +63,14 @@
 </div>
 
 <!-- New Application modal: just name + URL, everything else defaults on the backend -->
-<div class="modal fade" id="new-app-modal" tabindex="-1">
-    <div class="modal-dialog">
+<div class="modal fade" id="diagnose-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
-            <form id="new-app-form">
-                <div class="modal-header">
-                    <h5 class="modal-title">New Application</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Application Name *</label>
-                        <input class="form-control" id="new-app-name" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">URL *</label>
-                        <input class="form-control" id="new-app-url" placeholder="https://example.com" required>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Add</button>
-                </div>
-            </form>
+            <div class="modal-header">
+                <h5 class="modal-title" id="diagnose-title">Diagnosis</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="diagnose-body"></div>
         </div>
     </div>
 </div>

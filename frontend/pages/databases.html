@@ -33,6 +33,28 @@
         Each check opens a real connection and runs <code>SELECT 1</code>. Passwords are read from
         the platform's environment at check time and are never stored in the database.
     </p>
+
+    <div class="card border-0 shadow-sm mt-4">
+        <div class="card-header bg-white fw-semibold">
+            <i class="bi bi-diagram-3 me-2"></i>What connects to what
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Database server</th><th>Engine</th><th>Connected from</th>
+                        <th>Program</th><th>Application</th><th>Last seen</th>
+                    </tr>
+                </thead>
+                <tbody id="db-links-body"></tbody>
+            </table>
+        </div>
+    </div>
+    <p class="text-muted small mt-3 mb-0">
+        Observed by each agent from its own machine's socket table &mdash; not read from any
+        configuration file. A program using a file-based database (SQLite, Access) opens no
+        connection and cannot appear here.
+    </p>
 </div>
 
 <div class="modal fade" id="db-list-modal" tabindex="-1">

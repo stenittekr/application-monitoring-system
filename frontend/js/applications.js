@@ -210,11 +210,34 @@
                     <td>${escapeHtml(app.environment)}</td>
                     <td><span class="badge bg-light text-dark border me-1">${app.health_check_type}</span>${escapeHtml(targetLabel(app))}
                         <div class="small mt-1">TLS: ${certCell(app)}</div></td>
-                    <td>${statusBadge(app.current_status)}${app.in_maintenance ? ' <span class="badge bg-info-subtle text-info-emphasis border">Maintenance</span>' : ""}</td>
+                    <td>${statusBadge(app.current_status)}${app.in_maintenance ? ' <span class="badge bg-info-subtle text-info-emphasis border">Maintenance</span>' : ""}
+                        <div class="small text-danger mt-1" data-reason="${app.id}"></div></td>
                     <td>${maturityBadge(app.maturity_status)}</td>
                     <td>${app.monitoring_enabled ? '<span class="text-success">Enabled</span>' : '<span class="text-muted">Disabled</span>'}</td>
                     <td>${formatDateTime(app.last_checked_at)}</td>
                 </tr>`).join("");
+            fillFailureReasons(apps);
+        }
+
+        // Why, not just that. "DOWN" sends someone to open the site by hand to
+        // find out what it says; "502, expected 200" is already the answer.
+        //
+        // Fetched only for rows that are actually failing - the reason lives on
+        // the last health check, not on the application, and asking for every
+        // row would be one request per application to say "fine" nine times.
+        async function fillFailureReasons(apps) {
+            const failing = apps.filter((app) => !["UP", "UNKNOWN"].includes(app.current_status));
+            await Promise.all(failing.map(async (app) => {
+                const box = document.querySelector(`[data-reason="${app.id}"]`);
+                if (!box) return;
+                try {
+                    const [check] = await api.get(`/applications/${app.id}/health-checks?limit=1`);
+                    if (check && check.error_message) box.textContent = check.error_message;
+                } catch (err) {
+                    // A missing reason is not worth an error on the page; the
+                    // status badge already carries the important part.
+                }
+            }));
         }
 
     // Both selects list the same enrolled servers; loaded once and reused.

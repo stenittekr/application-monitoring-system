@@ -1,0 +1,138 @@
+===========================================================================
+  MONITORING AGENT - INSTALLATION STEPS
+  Centralized Server & Application Monitoring Platform, AWGTC
+===========================================================================
+
+WHAT THIS IS
+  A small background service that reports this machine's health to the
+  central monitoring platform. It is read-only: it never accepts commands,
+  never opens a port on this machine, and never gives anyone remote access.
+
+WHAT YOU NEED BEFORE STARTING
+  1. Administrator rights on this machine.
+  2. The admin token, which IT will give you (or see step 3).
+
+  Nothing else. Python is included in this folder and installs itself if
+  the machine does not already have it - you do not need to do anything.
+
+
+---------------------------------------------------------------------------
+STEP 1  -  COPY THIS FOLDER TO THE MACHINE
+---------------------------------------------------------------------------
+  Copy the WHOLE folder - not just Install.bat - anywhere on the machine.
+  The Desktop is fine. USB stick, network share, email; it does not matter.
+
+
+---------------------------------------------------------------------------
+STEP 2  -  RUN THE INSTALLER
+---------------------------------------------------------------------------
+  Right-click  Install.bat   ->   "Run as administrator"
+
+  A black window opens and shows what it is doing. Leave it open.
+
+  If it says "Not running as Administrator", you left-clicked it. Close it
+  and right-click instead.
+
+
+---------------------------------------------------------------------------
+STEP 3  -  PASTE THE ADMIN TOKEN
+---------------------------------------------------------------------------
+  The installer asks for a token. Ask IT for it, or if you are an
+  administrator of the platform:
+
+    a. Open the monitoring platform in a browser and log in.
+    b. Go to the  Servers  page.
+    c. Click  "Add a machine".
+    d. Click  Copy  next to the token.
+    e. Paste it into the installer window and press Enter.
+       (Right-click pastes in a Command Prompt window.)
+
+  The token is used once, to register this machine. After that the machine
+  has its own credential and the token is never needed again.
+
+  It expires 8 hours after signing in. If enrolment fails, sign in again
+  and copy a fresh one.
+
+
+---------------------------------------------------------------------------
+STEP 4  -  WAIT FOR IT TO FINISH
+---------------------------------------------------------------------------
+  It takes about a minute. When it works you will see:
+
+        Done. <MACHINE NAME> is monitored and will start itself
+        after a reboot.
+
+  If it stops with a message beginning [X], nothing was installed. The
+  message says what went wrong; see TROUBLE below.
+
+
+---------------------------------------------------------------------------
+STEP 5  -  CONFIRM IT WORKED
+---------------------------------------------------------------------------
+  On the platform, open the Servers page. This machine appears within a
+  minute, showing its status, CPU, memory and disk.
+
+  On the machine itself you can also check:
+
+        Get-Service AMNSAgent          (PowerShell)
+        sc query AMNSAgent             (Command Prompt)
+
+  It should say RUNNING.
+
+  Nothing further is needed. The agent starts automatically after every
+  reboot and restarts itself if it stops unexpectedly.
+
+
+---------------------------------------------------------------------------
+TROUBLE
+---------------------------------------------------------------------------
+  "Python is not installed on this machine"
+      This package does not include Python. Install Python 3.10+ from
+      python.org, ticking "Add python.exe to PATH", then re-run - or ask
+      IT for the package that includes python-setup.exe.
+
+  "Python installed but is still not on PATH"
+      Restart the machine and run Install.bat again.
+
+  "agent.py is not in this folder"
+      Only Install.bat was copied. Copy the whole folder.
+
+  "pip install failed"
+      This machine cannot reach the Python package index. Ask IT for the
+      package that includes the "wheels" folder, which installs offline.
+
+  "Enrolment failed"
+      Either the token has expired - get a fresh one - or this machine
+      cannot reach the platform over the network.
+
+  "The service installed but is not running"
+      Open Event Viewer -> Windows Logs -> Application and look for
+      "AMNS Agent crashed". Send that message to IT.
+
+
+---------------------------------------------------------------------------
+TO REMOVE IT LATER
+---------------------------------------------------------------------------
+  In an Administrator Command Prompt:
+
+        cd C:\AMNSAgent
+        python agent_service.py stop
+        python agent_service.py remove
+
+  Then ask IT to delete the machine on the platform's Servers page.
+
+
+---------------------------------------------------------------------------
+WHAT IT COLLECTS
+---------------------------------------------------------------------------
+  Machine name, model, serial number, Windows version, CPU/memory/disk
+  usage, network interfaces, installed programs, Windows services,
+  running processes, scheduled tasks, listening ports, and which database
+  servers programs connect to.
+
+  It does NOT read your files, your documents, your email, your browsing,
+  your keystrokes, or any passwords. It cannot be used to view or control
+  this machine.
+
+  Questions: stenitte@awgtc.com
+===========================================================================

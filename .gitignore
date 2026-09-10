@@ -31,3 +31,15 @@ monitoring/logs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Rollback copies the agent keeps beside itself
+agent.py.*
+
+# Installer log written on the target machine
+client-installer/install-log.txt
+
+# Secret/credential files (none currently exist, kept as a safety net)
+*.pem
+*.key
+*credentials*
+config.json

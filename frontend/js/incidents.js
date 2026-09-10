@@ -89,10 +89,19 @@
                         + "incidents are raised.";
             }
 
+            // Two radios rather than one toggling button: a button labelled
+            // "Turn alert email off" has to be read backwards to learn the
+            // current state. Radios show it.
             const control = isAdmin
-                ? `<button class="btn btn-sm btn-${on ? "outline-danger" : "success"} ms-auto flex-shrink-0"
-                       id="alerting-toggle" data-on="${on}">
-                       ${on ? "Turn alert email off" : "Turn alert email on"}</button>`
+                ? `<div class="btn-group btn-group-sm ms-auto flex-shrink-0" role="group"
+                        aria-label="Incident alert email">
+                       <input type="radio" class="btn-check" name="alerting" id="alerting-on"
+                              value="true" ${on ? "checked" : ""}>
+                       <label class="btn btn-outline-success" for="alerting-on">Enabled</label>
+                       <input type="radio" class="btn-check" name="alerting" id="alerting-off"
+                              value="false" ${on ? "" : "checked"}>
+                       <label class="btn btn-outline-danger" for="alerting-off">Disabled</label>
+                   </div>`
                 : "";
 
             host.innerHTML = `<div class="alert alert-${tone} d-flex align-items-center gap-2 py-2 mb-3">
@@ -104,8 +113,8 @@
                     ${control}
                 </div>`;
 
-            const button = document.getElementById("alerting-toggle");
-            if (button) button.addEventListener("click", () => toggleAlerting(button.dataset.on === "true"));
+            host.querySelectorAll("input[name=alerting]").forEach((radio) =>
+                radio.addEventListener("change", () => setAlerting(radio.value === "true")));
         } catch (err) {
             host.innerHTML = "";
         }
@@ -113,13 +122,14 @@
 
     // Turning it ON is the dangerous direction: on a machine that cannot see
     // half the estate, that is a flood. Turning it off needs no ceremony.
-    async function toggleAlerting(currentlyOn) {
+    async function setAlerting(turningOn) {
+        const currentlyOn = !turningOn;
         if (!currentlyOn) {
             const ok = await confirmAction(
                 "Turn incident alert email back on?\n\n"
                 + "Anything currently failing will start alerting. If this platform is running "
                 + "somewhere that cannot reach the systems it monitors, those alerts will be wrong.");
-            if (!ok) return;
+            if (!ok) { await showAlertingBanner(); return; }
         }
         try {
             await api.put("/settings/incident_alerts_enabled", { setting_value: currentlyOn ? "false" : "true" });

@@ -13,6 +13,8 @@
     <div class="card border-0 shadow-sm">
         <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
             <span><i class="bi bi-hdd-network me-2"></i>Enrolled Servers</span>
+            <button class="btn btn-sm btn-primary me-2" id="add-machine-btn">
+                <i class="bi bi-plus-lg"></i> Add a machine</button>
             <button class="btn btn-sm btn-outline-secondary" id="refresh-btn"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
         </div>
         <div class="table-responsive">
@@ -29,6 +31,38 @@
     </div>
 </div>
 
+<div class="modal fade" id="add-machine-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add a machine</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <ol class="small mb-3">
+                    <li>Copy the <strong>AMNS-Agent-Installer</strong> folder to the machine.</li>
+                    <li>Right-click <code>Install.bat</code> &rarr; <strong>Run as administrator</strong>.</li>
+                    <li>Paste the token below when it asks.</li>
+                </ol>
+                <label class="form-label small text-uppercase text-muted">Enrolment token</label>
+                <div class="input-group input-group-sm mb-1">
+                    <input class="form-control font-monospace" id="enrol-token" readonly>
+                    <button class="btn btn-outline-primary" id="copy-token-btn">Copy</button>
+                </div>
+                <p class="small text-muted">Expires 8 hours after you signed in. If enrolment
+                   fails, sign in again and copy a fresh one.</p>
+
+                <label class="form-label small text-uppercase text-muted mt-2">
+                    Or run it without prompting</label>
+                <div class="input-group input-group-sm">
+                    <input class="form-control font-monospace" id="enrol-command" readonly>
+                    <button class="btn btn-outline-secondary" id="copy-command-btn">Copy</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="discovery-modal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
@@ -38,7 +72,8 @@
             </div>
             <div class="modal-body">
                 <ul class="nav nav-tabs" role="tablist">
-                    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#discovery-services">Services</button></li>
+                    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#discovery-applications">Applications</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-services">Services</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-ports">Ports</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-processes">Processes</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-programs">Installed Programs</button></li>
@@ -47,7 +82,10 @@
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-changes">Changes</button></li>
                 </ul>
                 <div class="tab-content pt-3">
-                    <div class="tab-pane fade show active" id="discovery-services">
+                    <div class="tab-pane fade show active" id="discovery-applications">
+                        <div id="discovery-applications-body"></div>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-services">
                         <table class="table table-sm">
                             <thead><tr><th style="width:5rem">Monitor</th><th>Name</th><th>Display Name</th><th>Status</th></tr></thead>
                             <tbody id="discovery-services-body"></tbody>
