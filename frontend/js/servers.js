@@ -745,15 +745,15 @@
         }
     }
 
-    // A fix that ships to a fleet must not mean a command run on 200+ machines
-    // by hand - queued here, applied by the agent on its own next check-in.
-    async function sendAgentCommand(serverId, action, button) {
+    // For a stuck-but-alive agent only: a crash already recovers on its own
+    // (the service's own configured recovery), and an out-of-date agent
+    // already updates itself on its next check-in, no admin action needed
+    // either way - a 200+ machine fleet cannot mean a command run by hand.
+    async function restartAgent(serverId, button) {
         button.disabled = true;
         try {
-            await api.post(`/servers/${serverId}/agent-command`, { action });
-            showToast(action === "UPDATE"
-                ? "Update queued - applied on this agent's next check-in."
-                : "Restart queued - applied on this agent's next check-in.");
+            await api.post(`/servers/${serverId}/agent-command`, { action: "RESTART" });
+            showToast("Restart queued - applied on this agent's next check-in.");
         } catch (err) {
             showError(err);
         } finally {
@@ -766,10 +766,7 @@
 
         const commandButtons = document.getElementById("agent-command-buttons");
         commandButtons.classList.toggle("d-none", getCurrentUser().role !== "ADMIN");
-        document.getElementById("agent-restart-btn").onclick = (e) =>
-            sendAgentCommand(server.id, "RESTART", e.currentTarget);
-        document.getElementById("agent-update-btn").onclick = (e) =>
-            sendAgentCommand(server.id, "UPDATE", e.currentTarget);
+        document.getElementById("agent-restart-btn").onclick = (e) => restartAgent(server.id, e.currentTarget);
         const expectedServices = server.expected_services || [];
         const expectedProcesses = server.expected_processes || [];
 

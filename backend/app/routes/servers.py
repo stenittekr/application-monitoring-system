@@ -94,7 +94,7 @@ def heartbeat():
         return error_response("Invalid server_id or token.", "INVALID_AGENT_TOKEN", 401)
 
     server_service.record_heartbeat(server, data)
-    command = server_service.consume_agent_command(server)
+    command = server_service.next_agent_command(server, data.get("agent_version"))
     return success_response({
         "status": "ok",
         "next_heartbeat_in": server.heartbeat_interval_seconds,
@@ -105,9 +105,13 @@ def heartbeat():
 @bp.post("/<int:server_id>/agent-command")
 @roles_required("ADMIN")
 def send_agent_command(server_id):
-    """Queues a RESTART or UPDATE for this server's agent, applied on its next
-    check-in - so a fix rolled out to a fleet does not mean walking each
-    machine and running a command by hand."""
+    """Queues a RESTART for this server's agent, applied on its next check-in.
+
+    An outright crash already recovers on its own (the service's own
+    configured recovery restarts it, no dashboard action needed) and a
+    version behind what the platform ships auto-updates on every heartbeat
+    regardless of anyone clicking anything - this is for the remaining case,
+    an agent that is stuck-but-still-checking-in and needs a nudge."""
     server = server_service.get_server(server_id)
     if not server:
         return error_response("Server not found.", "SERVER_NOT_FOUND", 404)

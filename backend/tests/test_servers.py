@@ -294,24 +294,38 @@ def test_the_agent_reports_which_databases_a_process_is_connected_to(db):
     assert link["local_port"] != 3301
 
 
-def test_agent_command_is_queued_and_consumed_once(db):
+def test_queued_restart_is_returned_once_when_the_agent_is_already_current(db):
     """A fleet-wide fix must not mean a command run on 200+ machines by hand -
-    consumed exactly once, in the next heartbeat's reply, then gone."""
+    an admin-queued RESTART is consumed exactly once, in the next heartbeat's
+    reply, then gone - as long as the agent isn't behind, which takes priority."""
     server, _ = server_service.enroll({"hostname": "CMD-BOX"})
     server_service.request_agent_command(server, "RESTART")
     assert server.pending_agent_command == "RESTART"
 
-    command = server_service.consume_agent_command(server)
+    current_version, _, _ = server_service.current_agent_release()
+    command = server_service.next_agent_command(server, current_version)
     assert command == {"action": "RESTART"}
     assert server.pending_agent_command is None
-    assert server_service.consume_agent_command(server) is None, "must fire once, not repeat"
+    assert server_service.next_agent_command(server, current_version) is None, \
+        "must fire once, not repeat"
 
 
-def test_update_command_carries_the_current_release_hash(db):
-    """What an updating agent verifies its download against before it trusts it."""
+def test_an_outdated_agent_is_told_to_update_with_no_admin_action(db):
+    """The whole point: nobody has to notice or click anything, on any of a
+    200+ machine fleet, for a routine fix to reach everyone."""
     server, _ = server_service.enroll({"hostname": "UPDATE-BOX"})
-    server_service.request_agent_command(server, "UPDATE")
 
     version, sha256, _ = server_service.current_agent_release()
-    command = server_service.consume_agent_command(server)
+    command = server_service.next_agent_command(server, "0.0.1-way-behind")
     assert command == {"action": "UPDATE", "version": version, "sha256": sha256}
+
+
+def test_being_behind_overrides_a_queued_restart(db):
+    """One command per heartbeat: an out-of-date agent updates first and picks
+    up whatever the RESTART was for on its very next, now-current check-in."""
+    server, _ = server_service.enroll({"hostname": "BOTH-BOX"})
+    server_service.request_agent_command(server, "RESTART")
+
+    command = server_service.next_agent_command(server, "0.0.1-way-behind")
+    assert command["action"] == "UPDATE"
+    assert server.pending_agent_command == "RESTART", "not consumed - its turn is next check-in"

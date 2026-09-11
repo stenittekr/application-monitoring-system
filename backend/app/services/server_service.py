@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # What an admin can ask a server's agent to do from the dashboard, applied on
 # its next check-in - the alternative to walking a 200+ machine fleet with a
 # script every time a fix ships.
-AGENT_COMMANDS = ("RESTART", "UPDATE")
+AGENT_COMMANDS = ("RESTART",)
 
 # Served straight from the checked-in source, not a second copy kept in sync
 # by hand - there is exactly one file an update ships from.
@@ -135,25 +135,38 @@ def current_agent_release():
 
 
 def request_agent_command(server, action):
-    """Queues a RESTART or UPDATE for this server's agent, carried in its next
-    heartbeat reply - an admin's action from the dashboard, not a command
-    someone has to run on the machine itself."""
+    """Queues a RESTART for this server's agent, carried in its next heartbeat
+    reply - an admin's action from the dashboard, not a command someone has
+    to run on the machine itself."""
     server.pending_agent_command = action
     db.session.commit()
 
 
-def consume_agent_command(server):
-    """Reads and clears the pending command, if any - carried in exactly one
-    heartbeat reply, the same one-shot pattern as the agent's own last_crash."""
+def _consume_pending_restart(server):
+    """Reads and clears an admin-queued RESTART, if any - carried in exactly
+    one heartbeat reply, the same one-shot pattern as the agent's last_crash."""
     action = server.pending_agent_command
     if not action:
         return None
     server.pending_agent_command = None
     db.session.commit()
-    if action == "UPDATE":
-        version, sha256, _ = current_agent_release()
-        return {"action": "UPDATE", "version": version, "sha256": sha256}
     return {"action": action}
+
+
+def next_agent_command(server, reported_version):
+    """What this agent should do next.
+
+    A version behind what the platform currently ships always means UPDATE -
+    no admin has to notice or click anything, on any of a 200+ machine fleet,
+    for a routine fix to reach everyone. Only when the agent is already
+    current does an admin's own queued RESTART (for a stuck-but-alive agent)
+    get a turn; an outright crash needs neither - the service's own configured
+    recovery already restarts it on its own.
+    """
+    version, sha256, _ = current_agent_release()
+    if reported_version and reported_version != version:
+        return {"action": "UPDATE", "version": version, "sha256": sha256}
+    return _consume_pending_restart(server)
 
 
 def list_servers():
