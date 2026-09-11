@@ -342,9 +342,16 @@
         // watching. A queue that never drains means heartbeats are being kept
         // rather than delivered, while the last one that got through looks fine.
         const ah = server.agent_health || {};
+        // Reported once, by the run that came back up after the one that
+        // died - the only way to see why without remoting into this machine.
+        const crashHtml = ah.last_crash
+            ? `<div class="small text-danger">Previous run crashed ${formatDateTime(ah.last_crash.at)}:
+                   ${escapeHtml(ah.last_crash.error)}</div>`
+            : "";
         const agentHtml = server.agent_health_status === "UNAVAILABLE"
             ? notAvailable("this agent does not report its own health (needs v0.9.0)")
             : `<div class="small">
+                   ${crashHtml}
                    <div>Version ${escapeHtml(server.agent_version || "?")}, up ${
                        Math.floor((ah.agent_uptime_seconds || 0) / 3600)}h</div>
                    <div class="${(ah.queued_heartbeats || 0) >= 10 ? "text-danger" : ""}">

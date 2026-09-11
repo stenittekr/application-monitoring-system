@@ -1031,7 +1031,43 @@ def _agent_service_facts():
         pass
     return facts
 
-def _agent_self_health(queue_path):
+def _crash_marker_path(config_path):
+    return os.path.join(os.path.dirname(config_path), "last_crash.json")
+
+
+def report_crash(config_path, exc):
+    """Called by the Windows Service wrapper right before it lets an unhandled
+    exception kill the process. Writes what happened beside the config so the
+    NEXT start can carry it into its very first heartbeat.
+
+    The one thing a dead process cannot report about itself is why it died -
+    that has always meant Event Viewer on the actual machine, for every single
+    occurrence, on however many hundred machines this runs on. The agent that
+    comes back up (the service is configured to restart itself) can say what
+    killed the one before it, so this shows up on the platform without anyone
+    touching that PC.
+    """
+    try:
+        with open(_crash_marker_path(config_path), "w", encoding="utf-8") as fh:
+            json.dump({"error": str(exc), "at": datetime.now(timezone.utc).isoformat()}, fh)
+    except OSError:
+        pass
+
+
+def _consume_last_crash(config_path):
+    """Reads and deletes the crash marker left by a previous run, if any -
+    reported exactly once, on the next start, then gone."""
+    path = _crash_marker_path(config_path)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        os.remove(path)
+        return data
+    except (OSError, ValueError):
+        return None
+
+
+def _agent_self_health(queue_path, last_crash=None):
     """What the agent knows about itself.
 
     §7.1 asks it to self-monitor for crashes, queue growth, high resource use
@@ -1049,6 +1085,7 @@ def _agent_self_health(queue_path):
         "failed_heartbeats": _agent_failed_heartbeats,
         "queued_heartbeats": 0,
         "queue_bytes": 0,
+        "last_crash": last_crash,
         # How it is installed, alongside how it is running. Both are "about the
         # agent", and carrying them together means no second column, no
         # migration, and one place the UI has to look.
@@ -1071,7 +1108,7 @@ def _agent_self_health(queue_path):
     return health
 
 
-def collect_metrics(queue_path=None, api_url=None):
+def collect_metrics(queue_path=None, api_url=None, last_crash=None):
     """Gathers the current CPU/RAM/disk/uptime/discovery snapshot - never raises,
     degrades to None/[] per field so one failing collector never blocks the rest."""
     def safe(fn):
@@ -1114,7 +1151,7 @@ def collect_metrics(queue_path=None, api_url=None):
         "disk_io": safe(_disk_io) or [],
         "web_sites": safe(_web_sites) or [],
         "reachability": safe(lambda: _network_reachability(api_url)) or {},
-        "agent_health": safe(lambda: _agent_self_health(queue_path)) if queue_path else None,
+        "agent_health": safe(lambda: _agent_self_health(queue_path, last_crash)) if queue_path else None,
     }
 
 
@@ -1274,6 +1311,10 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
     forever (Ctrl+C) when stop_event is None."""
     queue_path = _queue_path(config_path)
     print(f"Agent {AGENT_VERSION} starting. Heartbeat every {interval}s.")
+    # Whatever killed the last run, said once, in the very first heartbeat.
+    last_crash = _consume_last_crash(config_path)
+    if last_crash:
+        print(f"[previous run crashed] {last_crash.get('error')} at {last_crash.get('at')}")
     # Watches for database connections between heartbeats; see
     # DATABASE_SAMPLE_SECONDS for why once a minute cannot work.
     start_database_sampler()
@@ -1283,7 +1324,8 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
         api, server_id, token, interval = _reload(config_path, api, server_id, token, interval)
         _flush_queue(api, token, queue_path)
 
-        metrics = collect_metrics(queue_path, api)
+        metrics = collect_metrics(queue_path, api, last_crash)
+        last_crash = None  # said once; do not repeat it every cycle
         ok, message = send_heartbeat(api, server_id, token, metrics)
         if ok:
             print(f"[heartbeat OK] cpu={metrics['cpu_percent']}% ram={metrics['ram_percent']}% "

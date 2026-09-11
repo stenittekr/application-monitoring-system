@@ -48,6 +48,9 @@ class AgentService(win32serviceutil.ServiceFramework):
             agent.run_from_config(agent_config.DEFAULT_CONFIG_PATH, stop_event=self.stop_event)
         except Exception as exc:
             servicemanager.LogErrorMsg(f"AMNS Agent crashed: {exc}")
+            # So the reason shows up on the platform when this service restarts
+            # itself, instead of only in this machine's own Event Viewer.
+            agent.report_crash(agent_config.DEFAULT_CONFIG_PATH, exc)
 
 
 if __name__ == "__main__":
