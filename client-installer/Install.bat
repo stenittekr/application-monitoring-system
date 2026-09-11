@@ -137,7 +137,12 @@ REM --- copy the agent somewhere permanent -------------------------------------
 REM Not run from the shared folder: that folder is a copy someone made, and the
 REM service would break the day it is deleted.
 if not exist "%TARGET%" mkdir "%TARGET%"
-copy /y agent.py agent_config.py agent_service.py requirements.txt "%TARGET%" >nul
+REM copy does not take a list of distinct source names - only one source
+REM (or a wildcard, or +-joined names to concatenate into one file). Listed
+REM like this it fails with "The syntax of the command is incorrect", and
+REM >nul hid that on every run: nothing was ever copied, and pip then failed
+REM to find requirements.txt in the empty target.
+for %%F in (agent.py agent_config.py agent_service.py requirements.txt) do copy /y "%%F" "%TARGET%" >nul
 cd /d "%TARGET%"
 
 REM --- dependencies -----------------------------------------------------------
