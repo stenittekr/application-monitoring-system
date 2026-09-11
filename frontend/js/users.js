@@ -66,8 +66,9 @@
         document.getElementById("user-email").value = user ? user.email : "";
         document.getElementById("user-role").value = user ? user.role : "AUDITOR";
         document.getElementById("user-password").value = "";
-        document.getElementById("user-password").required = !user;
-        document.getElementById("user-password-hint").style.display = user ? "block" : "none";
+        document.getElementById("user-password-hint").textContent = user
+            ? "Leave blank to keep the current password."
+            : "Leave blank if this person logs in with their AD/network password.";
         document.getElementById("user-active-wrapper").style.display = user ? "block" : "none";
         document.getElementById("user-active").checked = user ? user.is_active : true;
         modal.show();

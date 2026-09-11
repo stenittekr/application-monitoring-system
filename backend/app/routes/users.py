@@ -1,3 +1,5 @@
+import secrets
+
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
@@ -22,18 +24,24 @@ def list_users():
 @bp.post("")
 @roles_required("ADMIN")
 def create_user():
-    """Creates a new user account after validating email, password strength, and role."""
+    """Creates a new user account after validating email, password strength, and role.
+
+    Password is optional: leaving it blank is how you add someone who signs in
+    with their AD/network password (auth.py falls back to LDAP for a user with
+    no matching local password) - they get a random, never-shown local
+    password instead of the admin having to invent one that will never be used.
+    """
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
     role = (data.get("role") or "AUDITOR").upper()
 
-    if not name or not email or not password:
-        return error_response("Name, email and password are required.", "VALIDATION_ERROR", 422)
+    if not name or not email:
+        return error_response("Name and email are required.", "VALIDATION_ERROR", 422)
     if not is_valid_email(email):
         return error_response("A valid email is required.", "VALIDATION_ERROR", 422)
-    if not is_strong_password(password):
+    if password and not is_strong_password(password):
         return error_response(
             "Password must be at least 8 characters and include a letter and a number.",
             "WEAK_PASSWORD", 422,
@@ -44,7 +52,7 @@ def create_user():
         return error_response("A user with this email already exists.", "DUPLICATE_EMAIL", 409)
 
     user = User(name=name, email=email, role=role)
-    user.set_password(password)
+    user.set_password(password or secrets.token_urlsafe(32))
     db.session.add(user)
     db.session.commit()
 
