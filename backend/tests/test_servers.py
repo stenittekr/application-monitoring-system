@@ -292,3 +292,26 @@ def test_the_agent_reports_which_databases_a_process_is_connected_to(db):
     # The listening port and the outbound local port are different things, and
     # confusing them is what made the first version of this find nothing.
     assert link["local_port"] != 3301
+
+
+def test_agent_command_is_queued_and_consumed_once(db):
+    """A fleet-wide fix must not mean a command run on 200+ machines by hand -
+    consumed exactly once, in the next heartbeat's reply, then gone."""
+    server, _ = server_service.enroll({"hostname": "CMD-BOX"})
+    server_service.request_agent_command(server, "RESTART")
+    assert server.pending_agent_command == "RESTART"
+
+    command = server_service.consume_agent_command(server)
+    assert command == {"action": "RESTART"}
+    assert server.pending_agent_command is None
+    assert server_service.consume_agent_command(server) is None, "must fire once, not repeat"
+
+
+def test_update_command_carries_the_current_release_hash(db):
+    """What an updating agent verifies its download against before it trusts it."""
+    server, _ = server_service.enroll({"hostname": "UPDATE-BOX"})
+    server_service.request_agent_command(server, "UPDATE")
+
+    version, sha256, _ = server_service.current_agent_release()
+    command = server_service.consume_agent_command(server)
+    assert command == {"action": "UPDATE", "version": version, "sha256": sha256}

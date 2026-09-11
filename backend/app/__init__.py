@@ -134,6 +134,7 @@ def _register_blueprints(app):
     """Registers all API route blueprints on the app."""
     from app.routes import auth, applications, incidents, health_checks
     from app.routes import reports, activity_logs, users, settings, maintenance_windows, servers
+    from app.routes import agent_release
 
     app.register_blueprint(auth.bp)
     app.register_blueprint(applications.bp)
@@ -145,6 +146,7 @@ def _register_blueprints(app):
     app.register_blueprint(settings.bp)
     app.register_blueprint(maintenance_windows.bp)
     app.register_blueprint(servers.bp)
+    app.register_blueprint(agent_release.bp)
 
 
 def _register_jwt_handlers(jwt_manager: JWTManager):

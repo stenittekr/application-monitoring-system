@@ -46,11 +46,25 @@ class AgentService(win32serviceutil.ServiceFramework):
                                (self._svc_name_, ""))
         try:
             agent.run_from_config(agent_config.DEFAULT_CONFIG_PATH, stop_event=self.stop_event)
+        except agent.RestartRequested as exc:
+            # Not a crash - an admin asked for this (restart, or an update
+            # that just wrote a new agent.py) from the dashboard. Still let
+            # the process end abnormally: the service's own crash-recovery
+            # (see Install.bat's `sc failure`) is what actually brings it
+            # back up, this time running whatever agent.py now says.
+            servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STOPPED,
+                                   (self._svc_name_, f" restarting ({exc})"))
+            raise
         except Exception as exc:
             servicemanager.LogErrorMsg(f"AMNS Agent crashed: {exc}")
             # So the reason shows up on the platform when this service restarts
             # itself, instead of only in this machine's own Event Viewer.
             agent.report_crash(agent_config.DEFAULT_CONFIG_PATH, exc)
+            # Re-raised so the process actually ends abnormally: swallowing it
+            # here made SvcDoRun return normally, which Windows reads as a
+            # clean stop - the crash-recovery Install.bat configures only
+            # fires on a failure, so a crash caught here never triggered it.
+            raise
 
 
 if __name__ == "__main__":

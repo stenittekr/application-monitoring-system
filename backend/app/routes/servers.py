@@ -94,7 +94,35 @@ def heartbeat():
         return error_response("Invalid server_id or token.", "INVALID_AGENT_TOKEN", 401)
 
     server_service.record_heartbeat(server, data)
-    return success_response({"status": "ok", "next_heartbeat_in": server.heartbeat_interval_seconds})
+    command = server_service.consume_agent_command(server)
+    return success_response({
+        "status": "ok",
+        "next_heartbeat_in": server.heartbeat_interval_seconds,
+        "command": command,
+    })
+
+
+@bp.post("/<int:server_id>/agent-command")
+@roles_required("ADMIN")
+def send_agent_command(server_id):
+    """Queues a RESTART or UPDATE for this server's agent, applied on its next
+    check-in - so a fix rolled out to a fleet does not mean walking each
+    machine and running a command by hand."""
+    server = server_service.get_server(server_id)
+    if not server:
+        return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
+
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").upper()
+    if action not in server_service.AGENT_COMMANDS:
+        return error_response(f"action must be one of {server_service.AGENT_COMMANDS}.",
+                               "VALIDATION_ERROR", 422)
+
+    server_service.request_agent_command(server, action)
+    log_activity(int(get_jwt_identity()), "AGENT_COMMAND_QUEUED", "Server", server.id,
+                 f"Queued {action} for {server.hostname}, applied on its next check-in.",
+                 request.remote_addr)
+    return success_response(server.to_dict())
 
 
 @bp.put("/<int:server_id>/alert-scope")

@@ -15,6 +15,7 @@ Usage (dev/manual):
 """
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
@@ -32,7 +33,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.18.0"
+AGENT_VERSION = "0.19.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -1225,16 +1226,20 @@ def _flush_queue(api, token, path):
         if remaining:
             remaining.append(entry)  # a previous entry this cycle already failed to send
             continue
-        ok, _ = send_heartbeat(api, entry["server_id"], token, entry["metrics"])
+        # A command is only ever acted on for the live heartbeat below, not a
+        # backfilled one - it describes what the platform wants done now, and
+        # a queued entry is minutes-to-hours old by the time it is retried.
+        ok, _, _ = send_heartbeat(api, entry["server_id"], token, entry["metrics"])
         if not ok:
             remaining.append(entry)
     _save_queue(path, remaining)
 
 
 def send_heartbeat(api, server_id, token, metrics):
-    """Posts one heartbeat. Returns (ok, message) - never raises, so callers
-    (the live loop and the queue flush) can both treat failure as data, not
-    an exception to handle."""
+    """Posts one heartbeat. Returns (ok, message, command) - never raises, so
+    callers (the live loop and the queue flush) can both treat failure as
+    data, not an exception to handle. command is whatever the platform wants
+    this machine to do next (see RestartRequested), or None almost always."""
     try:
         resp = requests.post(
             f"{api}/servers/heartbeat",
@@ -1243,10 +1248,60 @@ def send_heartbeat(api, server_id, token, metrics):
             timeout=10,
         )
         if resp.ok:
-            return True, "ok"
-        return False, f"{resp.status_code} {resp.text}"
+            command = None
+            try:
+                command = resp.json().get("data", {}).get("command")
+            except ValueError:
+                pass
+            return True, "ok", command
+        return False, f"{resp.status_code} {resp.text}", None
     except requests.exceptions.RequestException as exc:
-        return False, str(exc)
+        return False, str(exc), None
+
+
+class RestartRequested(Exception):
+    """Raised to deliberately end the heartbeat loop when the platform asked
+    for a restart or an update - not a crash. agent_service.py lets this one
+    escape rather than swallowing it like a real crash, so the service ends
+    abnormally and its own configured crash-recovery (see Install.bat's `sc
+    failure`) restarts it - reused rather than teaching the agent a second,
+    parallel way to bring itself back up."""
+
+
+def _apply_command(api, token, server_id, command):
+    """Carries out a RESTART or UPDATE the platform asked for at the last
+    heartbeat, then ends the loop either way via RestartRequested."""
+    action = command.get("action")
+    if action == "UPDATE":
+        _download_update(api, token, server_id, command)
+    if action in ("UPDATE", "RESTART"):
+        raise RestartRequested(action)
+
+
+def _download_update(api, token, server_id, command):
+    """Downloads the new agent.py, verifies it against the hash the platform
+    declared in the same reply that asked for this (a truncated or tampered
+    download is refused, not run), keeps the current file as a rollback copy,
+    and writes the new one in its place."""
+    import shutil
+
+    resp = requests.get(f"{api}/agent/download", params={"server_id": server_id},
+                         headers={"X-Agent-Token": token}, timeout=30)
+    resp.raise_for_status()
+    content = resp.content
+    digest = hashlib.sha256(content).hexdigest()
+    if digest != command.get("sha256"):
+        print(f"[update REJECTED] hash mismatch - expected {command.get('sha256')}, got {digest}")
+        return
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    current = os.path.abspath(__file__)
+    backup = os.path.join(here, f"agent.py.{AGENT_VERSION}")
+    if not os.path.exists(backup):
+        shutil.copy2(current, backup)
+    with open(current, "wb") as fh:
+        fh.write(content)
+    print(f"[update applied] now {command.get('version')} - restarting to run it")
 
 
 def _reload(config_path, api, server_id, token, interval):
@@ -1326,7 +1381,7 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
 
         metrics = collect_metrics(queue_path, api, last_crash)
         last_crash = None  # said once; do not repeat it every cycle
-        ok, message = send_heartbeat(api, server_id, token, metrics)
+        ok, message, command = send_heartbeat(api, server_id, token, metrics)
         if ok:
             print(f"[heartbeat OK] cpu={metrics['cpu_percent']}% ram={metrics['ram_percent']}% "
                   f"disk={metrics['disk_percent']}% "
@@ -1338,6 +1393,9 @@ def run(api, server_id, token, interval, config_path=agent_config.DEFAULT_CONFIG
             _agent_failed_heartbeats += 1
             print(f"[heartbeat FAILED - queued, will retry next cycle] {message}")
             _queue_failed(queue_path, server_id, metrics)
+
+        if command:
+            _apply_command(api, token, server_id, command)
 
         # Sleep the remainder of the interval, not the whole of it. Sleeping
         # `interval` AFTER the work makes the real period interval + work: the

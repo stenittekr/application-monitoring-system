@@ -11,6 +11,7 @@ import re
 import secrets
 import socket
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from app.extensions import db
 from app.models.server import Server
@@ -18,6 +19,15 @@ from app.services import incident_service, notification_service
 from app.services.audit_service import log_activity
 
 logger = logging.getLogger(__name__)
+
+# What an admin can ask a server's agent to do from the dashboard, applied on
+# its next check-in - the alternative to walking a 200+ machine fleet with a
+# script every time a fix ships.
+AGENT_COMMANDS = ("RESTART", "UPDATE")
+
+# Served straight from the checked-in source, not a second copy kept in sync
+# by hand - there is exactly one file an update ships from.
+_AGENT_SOURCE = Path(__file__).resolve().parent.parent.parent.parent / "client-installer" / "agent.py"
 
 # How many missed intervals before we declare a server DOWN - one blip
 # (a slow network tick) shouldn't raise a false alarm.
@@ -112,6 +122,38 @@ def verify_token(server, token):
 def get_server(server_id):
     """Looks up a single non-deleted server by id."""
     return Server.query.filter_by(id=server_id, deleted_at=None).first()
+
+
+def current_agent_release():
+    """Reads the agent.py this platform hands out on request: its version, its
+    sha256 (what an updating agent verifies the download against before it
+    trusts it), and its bytes."""
+    content = _AGENT_SOURCE.read_bytes()
+    match = re.search(rb'AGENT_VERSION\s*=\s*"([^"]+)"', content)
+    version = match.group(1).decode() if match else "unknown"
+    return version, hashlib.sha256(content).hexdigest(), content
+
+
+def request_agent_command(server, action):
+    """Queues a RESTART or UPDATE for this server's agent, carried in its next
+    heartbeat reply - an admin's action from the dashboard, not a command
+    someone has to run on the machine itself."""
+    server.pending_agent_command = action
+    db.session.commit()
+
+
+def consume_agent_command(server):
+    """Reads and clears the pending command, if any - carried in exactly one
+    heartbeat reply, the same one-shot pattern as the agent's own last_crash."""
+    action = server.pending_agent_command
+    if not action:
+        return None
+    server.pending_agent_command = None
+    db.session.commit()
+    if action == "UPDATE":
+        version, sha256, _ = current_agent_release()
+        return {"action": "UPDATE", "version": version, "sha256": sha256}
+    return {"action": action}
 
 
 def list_servers():

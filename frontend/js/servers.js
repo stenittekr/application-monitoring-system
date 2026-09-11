@@ -745,8 +745,31 @@
         }
     }
 
+    // A fix that ships to a fleet must not mean a command run on 200+ machines
+    // by hand - queued here, applied by the agent on its own next check-in.
+    async function sendAgentCommand(serverId, action, button) {
+        button.disabled = true;
+        try {
+            await api.post(`/servers/${serverId}/agent-command`, { action });
+            showToast(action === "UPDATE"
+                ? "Update queued - applied on this agent's next check-in."
+                : "Restart queued - applied on this agent's next check-in.");
+        } catch (err) {
+            showError(err);
+        } finally {
+            button.disabled = false;
+        }
+    }
+
     function openDiscoveryModal(server) {
         document.getElementById("discovery-modal-title").textContent = `Discovered on ${server.hostname}`;
+
+        const commandButtons = document.getElementById("agent-command-buttons");
+        commandButtons.classList.toggle("d-none", getCurrentUser().role !== "ADMIN");
+        document.getElementById("agent-restart-btn").onclick = (e) =>
+            sendAgentCommand(server.id, "RESTART", e.currentTarget);
+        document.getElementById("agent-update-btn").onclick = (e) =>
+            sendAgentCommand(server.id, "UPDATE", e.currentTarget);
         const expectedServices = server.expected_services || [];
         const expectedProcesses = server.expected_processes || [];
 

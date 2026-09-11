@@ -67,6 +67,11 @@ class Server(db.Model):
     last_heartbeat_at = db.Column(db.DateTime, nullable=True)
     last_boot_at = db.Column(db.DateTime, nullable=True)  # estimated from uptime_seconds each heartbeat
 
+    # RESTART or UPDATE, queued from the dashboard and carried in the next
+    # heartbeat's reply, then cleared - a fleet-wide fix should never require
+    # a command run on 200+ machines by hand.
+    pending_agent_command = db.Column(db.String(20), nullable=True)
+
     # Latest discovery snapshot, stored as JSON text - these are candidates for
     # review, not automatically monitored (matches the "Discovered, not yet
     # approved" status the requirements doc calls for). A dedicated
@@ -364,6 +369,7 @@ class Server(db.Model):
             "uptime_seconds": self.uptime_seconds,
             "last_heartbeat_at": self.last_heartbeat_at.isoformat() if self.last_heartbeat_at else None,
             "last_boot_at": self.last_boot_at.isoformat() if self.last_boot_at else None,
+            "pending_agent_command": self.pending_agent_command,
             "discovered_services": json.loads(self.discovered_services_json) if self.discovered_services_json else [],
             "discovered_ports": json.loads(self.discovered_ports_json) if self.discovered_ports_json else [],
             "discovered_processes": json.loads(self.discovered_processes_json) if self.discovered_processes_json else [],

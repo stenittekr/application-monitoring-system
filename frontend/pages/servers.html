@@ -68,6 +68,12 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="discovery-modal-title">Discovered on server</h5>
+                <div id="agent-command-buttons" class="d-none me-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="agent-restart-btn"
+                            title="Applied on this agent's next check-in">Restart Agent</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="agent-update-btn"
+                            title="Applied on this agent's next check-in">Update Agent</button>
+                </div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
