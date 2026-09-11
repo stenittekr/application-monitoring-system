@@ -33,7 +33,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.19.0"
+AGENT_VERSION = "0.20.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -679,13 +679,19 @@ def _network_counters():
     """
     stats = psutil.net_if_stats()
     counters = psutil.net_io_counters(pernic=True)
+    addrs = psutil.net_if_addrs()
     interfaces = []
     for name, stat in stats.items():
         if name.lower().startswith(("loopback", "lo")):
             continue
         io = counters.get(name)
+        # AF_LINK is the link-layer family psutil reports the hardware (MAC)
+        # address under - a fixed identifier a DHCP-leased IP is not, useful
+        # for matching a machine against network/switch-port records.
+        mac = next((a.address for a in addrs.get(name, []) if a.family == psutil.AF_LINK), None)
         interfaces.append({
             "name": name,
+            "mac_address": mac,
             "up": bool(stat.isup),
             "speed_mbps": stat.speed or None,      # 0 means "not reported"
             "bytes_sent": getattr(io, "bytes_sent", None),

@@ -222,9 +222,10 @@
 
         const nics = server.network_interfaces || [];
         const nicsHtml = nics.length
-            ? `<table class="table table-sm mb-0"><thead><tr><th>Interface</th><th>State</th><th>Speed</th><th>Errors</th><th>Drops</th></tr></thead><tbody>`
+            ? `<table class="table table-sm mb-0"><thead><tr><th>Interface</th><th>MAC</th><th>State</th><th>Speed</th><th>Errors</th><th>Drops</th></tr></thead><tbody>`
               + nics.map((n) => `<tr>
                     <td>${escapeHtml(n.name)}</td>
+                    <td class="small text-muted">${n.mac_address ? `<code>${escapeHtml(n.mac_address)}</code>` : "-"}</td>
                     <td>${n.up ? '<span class="text-success">Up</span>' : '<span class="text-muted">Down</span>'}</td>
                     <td>${n.speed_mbps ? n.speed_mbps + " Mbps" : '<span class="text-muted">-</span>'}</td>
                     <td>${n.errors === null ? "-" : `<span class="${n.errors ? "text-danger" : ""}">${n.errors}</span>`}</td>
