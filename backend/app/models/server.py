@@ -71,6 +71,10 @@ class Server(db.Model):
     # heartbeat's reply, then cleared - a fleet-wide fix should never require
     # a command run on 200+ machines by hand.
     pending_agent_command = db.Column(db.String(20), nullable=True)
+    # e.g. {"service_name": "Spooler"} for RESTART_SERVICE - kept separate
+    # from the action itself so a plain command (RESTART) needs none.
+    pending_agent_command_params_json = db.Column(db.Text, nullable=True)
+    last_screenshot_at = db.Column(db.DateTime, nullable=True)
 
     # Latest discovery snapshot, stored as JSON text - these are candidates for
     # review, not automatically monitored (matches the "Discovered, not yet
@@ -370,6 +374,7 @@ class Server(db.Model):
             "last_heartbeat_at": self.last_heartbeat_at.isoformat() if self.last_heartbeat_at else None,
             "last_boot_at": self.last_boot_at.isoformat() if self.last_boot_at else None,
             "pending_agent_command": self.pending_agent_command,
+            "last_screenshot_at": self.last_screenshot_at.isoformat() if self.last_screenshot_at else None,
             "discovered_services": json.loads(self.discovered_services_json) if self.discovered_services_json else [],
             "discovered_ports": json.loads(self.discovered_ports_json) if self.discovered_ports_json else [],
             "discovered_processes": json.loads(self.discovered_processes_json) if self.discovered_processes_json else [],

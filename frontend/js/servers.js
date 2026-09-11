@@ -762,12 +762,68 @@
         }
     }
 
+    // Phase 1 of on-demand remote support: a screenshot on request, not a
+    // live feed - the agent only ever polls, it never accepts an inbound
+    // connection.
+    async function takeScreenshot(serverId, button) {
+        button.disabled = true;
+        try {
+            await api.post(`/servers/${serverId}/agent-command`, { action: "SCREENSHOT" });
+            showToast("Screenshot requested - captured on this agent's next check-in.");
+        } catch (err) {
+            showError(err);
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    // Not a plain <img src>: the API needs the same Bearer token every other
+    // request here carries, which a browser never attaches to an <img> tag by
+    // itself - fetched as a blob and handed to the <img> as an object URL.
+    async function renderScreenshot(server) {
+        const box = document.getElementById("screenshot-body");
+        if (!server.last_screenshot_at) {
+            box.innerHTML = '<div class="text-muted small">No screenshot taken yet.</div>';
+            return;
+        }
+        const captionHtml = `<div class="small text-muted mb-2">Captured ${formatDateTime(server.last_screenshot_at)}</div>`;
+        box.innerHTML = captionHtml + '<div class="text-muted small">Loading&hellip;</div>';
+        try {
+            const resp = await fetch(`${API_BASE_URL}/servers/${server.id}/screenshot`,
+                { headers: { Authorization: `Bearer ${getToken()}` } });
+            if (!resp.ok) throw new Error("screenshot not available");
+            const url = URL.createObjectURL(await resp.blob());
+            box.innerHTML = captionHtml
+                + `<img src="${url}" class="img-fluid border rounded" alt="Screenshot of ${escapeHtml(server.hostname)}">`;
+        } catch (err) {
+            box.innerHTML = captionHtml + '<div class="text-muted small">Could not load the screenshot.</div>';
+        }
+    }
+
+    // A specific, logged action, not an open command channel - restarts one
+    // named service the agent already discovered on this machine.
+    window.__restartService = async (serverId, serviceName, button) => {
+        button.disabled = true;
+        try {
+            await api.post(`/servers/${serverId}/agent-command`,
+                { action: "RESTART_SERVICE", service_name: serviceName });
+            showToast(`Restart of "${serviceName}" queued - applied on this agent's next check-in.`);
+        } catch (err) {
+            showError(err);
+        } finally {
+            button.disabled = false;
+        }
+    };
+
     function openDiscoveryModal(server) {
         document.getElementById("discovery-modal-title").textContent = `Discovered on ${server.hostname}`;
 
+        const isAdmin = getCurrentUser().role === "ADMIN";
         const commandButtons = document.getElementById("agent-command-buttons");
-        commandButtons.classList.toggle("d-none", getCurrentUser().role !== "ADMIN");
+        commandButtons.classList.toggle("d-none", !isAdmin);
         document.getElementById("agent-restart-btn").onclick = (e) => restartAgent(server.id, e.currentTarget);
+        document.getElementById("agent-screenshot-btn").onclick = (e) => takeScreenshot(server.id, e.currentTarget);
+        renderScreenshot(server);
         const expectedServices = server.expected_services || [];
         const expectedProcesses = server.expected_processes || [];
 
@@ -780,8 +836,12 @@
                     <td>${svc.status === "running"
                         ? `<span class="text-success">running</span>`
                         : `<span class="text-danger">${escapeHtml(svc.status || "-")}</span>`}</td>
+                    <td>${isAdmin
+                        ? `<button type="button" class="btn btn-sm btn-outline-secondary"
+                               onclick='window.__restartService(${server.id}, ${JSON.stringify(svc.name)}, this)'>Restart</button>`
+                        : ""}</td>
                 </tr>`).join("")
-            : `<tr><td colspan="4" class="text-muted text-center py-3">No services reported.</td></tr>`;
+            : `<tr><td colspan="5" class="text-muted text-center py-3">No services reported.</td></tr>`;
         document.getElementById("discovery-ports-body").innerHTML = server.discovered_ports.length
             ? server.discovered_ports.map((p) => `
                 <tr><td>${p.port ?? "-"}</td><td>${escapeHtml(p.protocol || "-")}</td><td>${escapeHtml(p.process_name || "-")}</td></tr>`).join("")

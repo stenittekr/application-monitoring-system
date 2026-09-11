@@ -105,13 +105,12 @@ def heartbeat():
 @bp.post("/<int:server_id>/agent-command")
 @roles_required("ADMIN")
 def send_agent_command(server_id):
-    """Queues a RESTART for this server's agent, applied on its next check-in.
-
-    An outright crash already recovers on its own (the service's own
-    configured recovery restarts it, no dashboard action needed) and a
-    version behind what the platform ships auto-updates on every heartbeat
-    regardless of anyone clicking anything - this is for the remaining case,
-    an agent that is stuck-but-still-checking-in and needs a nudge."""
+    """Queues RESTART, SCREENSHOT, or RESTART_SERVICE for this server's agent,
+    applied on its next check-in - phase 1 of on-demand remote support:
+    a small, specific, logged set of actions, not an open "run anything"
+    channel. An outright crash already recovers on its own (the service's own
+    configured recovery) and a version behind what the platform ships
+    auto-updates regardless of anyone clicking anything."""
     server = server_service.get_server(server_id)
     if not server:
         return error_response("Server not found.", "SERVER_NOT_FOUND", 404)
@@ -122,11 +121,38 @@ def send_agent_command(server_id):
         return error_response(f"action must be one of {server_service.AGENT_COMMANDS}.",
                                "VALIDATION_ERROR", 422)
 
-    server_service.request_agent_command(server, action)
-    log_activity(int(get_jwt_identity()), "AGENT_COMMAND_QUEUED", "Server", server.id,
-                 f"Queued {action} for {server.hostname}, applied on its next check-in.",
+    params = {}
+    if action == "RESTART_SERVICE":
+        service_name = (data.get("service_name") or "").strip()
+        if not service_name:
+            return error_response("service_name is required for RESTART_SERVICE.",
+                                   "VALIDATION_ERROR", 422)
+        params = {"service_name": service_name}
+
+    server_service.request_agent_command(server, action, params)
+    detail = f"Queued {action} for {server.hostname}, applied on its next check-in."
+    if params:
+        detail += f" ({params})"
+    log_activity(int(get_jwt_identity()), "AGENT_COMMAND_QUEUED", "Server", server.id, detail,
                  request.remote_addr)
     return success_response(server.to_dict())
+
+
+@bp.get("/<int:server_id>/screenshot")
+@roles_required(*VIEW_ROLES)
+def get_screenshot(server_id):
+    """Serves the most recent screenshot taken of this server, if any."""
+    from flask import send_file
+
+    server = server_service.get_server(server_id)
+    if not server or not server.last_screenshot_at:
+        return error_response("No screenshot has been taken of this server yet.",
+                               "SCREENSHOT_NOT_FOUND", 404)
+    path = server_service.screenshot_path(server.id)
+    if not path.exists():
+        return error_response("No screenshot has been taken of this server yet.",
+                               "SCREENSHOT_NOT_FOUND", 404)
+    return send_file(path, mimetype="image/png", max_age=0)
 
 
 @bp.put("/<int:server_id>/alert-scope")

@@ -72,6 +72,8 @@
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="agent-restart-btn"
                             title="For a stuck-but-alive agent. A crash already recovers on its own; an
                                     out-of-date agent already updates on its own next check-in.">Restart Agent</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="agent-screenshot-btn"
+                            title="Applied on this agent's next check-in">Take Screenshot</button>
                 </div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
@@ -84,6 +86,7 @@
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-programs">Installed Programs</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-tasks">Scheduled Tasks</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-health">Host Health</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-screenshot">Screenshot</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#discovery-changes">Changes</button></li>
                 </ul>
                 <div class="tab-content pt-3">
@@ -92,7 +95,7 @@
                     </div>
                     <div class="tab-pane fade" id="discovery-services">
                         <table class="table table-sm">
-                            <thead><tr><th style="width:5rem">Monitor</th><th>Name</th><th>Display Name</th><th>Status</th></tr></thead>
+                            <thead><tr><th style="width:5rem">Monitor</th><th>Name</th><th>Display Name</th><th>Status</th><th></th></tr></thead>
                             <tbody id="discovery-services-body"></tbody>
                         </table>
                     </div>
@@ -122,6 +125,9 @@
                     </div>
                     <div class="tab-pane fade" id="discovery-health">
                         <div id="health-body"></div>
+                    </div>
+                    <div class="tab-pane fade" id="discovery-screenshot">
+                        <div id="screenshot-body" class="text-muted small">No screenshot taken yet.</div>
                     </div>
                     <div class="tab-pane fade" id="discovery-changes">
                         <table class="table table-sm">

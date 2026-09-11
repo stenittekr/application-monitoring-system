@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 
 # What an admin can ask a server's agent to do from the dashboard, applied on
 # its next check-in - the alternative to walking a 200+ machine fleet with a
-# script every time a fix ships.
-AGENT_COMMANDS = ("RESTART",)
+# script every time a fix ships. Deliberately a short, specific list, not an
+# open "run any command" channel - that would be a different, much larger risk.
+AGENT_COMMANDS = ("RESTART", "SCREENSHOT", "RESTART_SERVICE")
 
 # Served straight from the checked-in source, not a second copy kept in sync
 # by hand - there is exactly one file an update ships from.
@@ -134,23 +135,27 @@ def current_agent_release():
     return version, hashlib.sha256(content).hexdigest(), content
 
 
-def request_agent_command(server, action):
-    """Queues a RESTART for this server's agent, carried in its next heartbeat
+def request_agent_command(server, action, params=None):
+    """Queues an action for this server's agent, carried in its next heartbeat
     reply - an admin's action from the dashboard, not a command someone has
-    to run on the machine itself."""
+    to run on the machine itself. params is action-specific, e.g.
+    {"service_name": "Spooler"} for RESTART_SERVICE."""
     server.pending_agent_command = action
+    server.pending_agent_command_params_json = json.dumps(params) if params else None
     db.session.commit()
 
 
-def _consume_pending_restart(server):
-    """Reads and clears an admin-queued RESTART, if any - carried in exactly
+def _consume_pending_command(server):
+    """Reads and clears an admin-queued command, if any - carried in exactly
     one heartbeat reply, the same one-shot pattern as the agent's last_crash."""
     action = server.pending_agent_command
     if not action:
         return None
+    params = json.loads(server.pending_agent_command_params_json or "{}")
     server.pending_agent_command = None
+    server.pending_agent_command_params_json = None
     db.session.commit()
-    return {"action": action}
+    return {"action": action, **params}
 
 
 def next_agent_command(server, reported_version):
@@ -159,14 +164,31 @@ def next_agent_command(server, reported_version):
     A version behind what the platform currently ships always means UPDATE -
     no admin has to notice or click anything, on any of a 200+ machine fleet,
     for a routine fix to reach everyone. Only when the agent is already
-    current does an admin's own queued RESTART (for a stuck-but-alive agent)
-    get a turn; an outright crash needs neither - the service's own configured
-    recovery already restarts it on its own.
+    current does an admin's own queued command (RESTART, SCREENSHOT,
+    RESTART_SERVICE) get a turn; an outright crash needs neither - the
+    service's own configured recovery already restarts it on its own.
     """
     version, sha256, _ = current_agent_release()
     if reported_version and reported_version != version:
         return {"action": "UPDATE", "version": version, "sha256": sha256}
-    return _consume_pending_restart(server)
+    return _consume_pending_command(server)
+
+
+# Where the latest screenshot from each server is kept - one file per server,
+# overwritten each time. Not a history/gallery: this is "what does the screen
+# look like right now", not a recording.
+_SCREENSHOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "backend" / "screenshots"
+
+
+def screenshot_path(server_id):
+    return _SCREENSHOT_DIR / f"{server_id}.png"
+
+
+def save_screenshot(server, image_bytes):
+    _SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    screenshot_path(server.id).write_bytes(image_bytes)
+    server.last_screenshot_at = datetime.now(timezone.utc)
+    db.session.commit()
 
 
 def list_servers():

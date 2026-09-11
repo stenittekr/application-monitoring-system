@@ -38,6 +38,9 @@ agent.py.*
 # Installer log written on the target machine
 client-installer/install-log.txt
 
+# On-demand remote screenshots - live, per-server, overwritten each time
+backend/screenshots/
+
 # Secret/credential files (none currently exist, kept as a safety net)
 *.pem
 *.key

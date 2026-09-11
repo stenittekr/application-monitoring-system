@@ -33,7 +33,7 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.20.0"
+AGENT_VERSION = "0.21.0"
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -1275,13 +1275,19 @@ class RestartRequested(Exception):
 
 
 def _apply_command(api, token, server_id, command):
-    """Carries out a RESTART or UPDATE the platform asked for at the last
-    heartbeat, then ends the loop either way via RestartRequested."""
+    """Carries out whatever the platform asked for at the last heartbeat.
+    UPDATE and RESTART end the loop via RestartRequested either way; the rest
+    (SCREENSHOT, RESTART_SERVICE) are small, specific, logged actions that
+    just run and let the loop continue - not an open "run anything" channel."""
     action = command.get("action")
     if action == "UPDATE":
         _download_update(api, token, server_id, command)
     if action in ("UPDATE", "RESTART"):
         raise RestartRequested(action)
+    if action == "SCREENSHOT":
+        _upload_screenshot(api, token, server_id)
+    elif action == "RESTART_SERVICE":
+        _restart_service(command.get("service_name"))
 
 
 def _download_update(api, token, server_id, command):
@@ -1308,6 +1314,100 @@ def _download_update(api, token, server_id, command):
     with open(current, "wb") as fh:
         fh.write(content)
     print(f"[update applied] now {command.get('version')} - restarting to run it")
+
+
+def _capture_screenshot_bytes():
+    """Captures a PNG of whatever is actually on the logged-in user's screen.
+
+    The service runs in Session 0, Windows' own non-interactive session,
+    which cannot see any real user's desktop directly - that isolation is why
+    a plain ImageGrab.grab() from here would return blank or fail outright.
+    So this launches a tiny helper (this same file, the hidden _capture-to
+    subcommand) into the active console session's own desktop, using that
+    user's token, and reads back what it wrote."""
+    import tempfile
+    import uuid
+
+    import win32con
+    import win32process
+    import win32profile
+    import win32ts
+
+    session_id = win32ts.WTSGetActiveConsoleSessionId()
+    if session_id in (0xFFFFFFFF, None):
+        raise RuntimeError("no interactive user is logged in on this machine")
+
+    user_token = win32ts.WTSQueryUserToken(session_id)
+    env = win32profile.CreateEnvironmentBlock(user_token, False)
+    out_path = os.path.join(tempfile.gettempdir(), f"amns_screenshot_{uuid.uuid4().hex}.png")
+
+    startup = win32process.STARTUPINFO()
+    startup.lpDesktop = "winsta0\\default"
+    command_line = f'"{sys.executable}" "{os.path.abspath(__file__)}" _capture-to "{out_path}"'
+    try:
+        win32process.CreateProcessAsUser(
+            user_token, None, command_line, None, None, False,
+            win32con.NORMAL_PRIORITY_CLASS | win32process.CREATE_UNICODE_ENVIRONMENT,
+            env, None, startup)
+    finally:
+        user_token.Close()
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not os.path.exists(out_path):
+        time.sleep(0.2)
+    if not os.path.exists(out_path):
+        raise RuntimeError("the capture helper did not produce an image in time")
+
+    time.sleep(0.3)  # give the writer a moment to finish flushing to disk
+    try:
+        with open(out_path, "rb") as fh:
+            return fh.read()
+    finally:
+        os.remove(out_path)
+
+
+def _capture_to_file(path):
+    """Runs as the helper process launched into the user's own session by
+    _capture_screenshot_bytes - this is the part that can actually see their
+    screen. Not imported at module level: Pillow is only needed here, and
+    only on a machine where a screenshot was ever actually requested."""
+    from PIL import ImageGrab
+
+    ImageGrab.grab().save(path, "PNG")
+
+
+def _upload_screenshot(api, token, server_id):
+    """Takes and uploads a screenshot because the platform asked for one -
+    best-effort: a machine with nobody logged in, or without Pillow installed,
+    has nothing to show, and that is worth logging, not crashing over."""
+    try:
+        image = _capture_screenshot_bytes()
+        resp = requests.post(f"{api}/agent/screenshot", params={"server_id": server_id},
+                              headers={"X-Agent-Token": token}, data=image, timeout=30)
+        resp.raise_for_status()
+        print("[screenshot uploaded]")
+    except Exception as exc:  # noqa: BLE001 - every failure mode here is "nothing to show"
+        print(f"[screenshot FAILED] {exc}")
+
+
+def _restart_service(service_name):
+    """Restarts one named Windows service - phase 1 of remote "small tasks":
+    a specific, logged action, not an open command channel. Best-effort: a
+    typo'd or already-stopped service name is worth logging, not crashing the
+    agent over."""
+    if not service_name:
+        print("[restart-service FAILED] no service_name given")
+        return
+    try:
+        subprocess.run(["net", "stop", service_name], capture_output=True, timeout=30)
+        result = subprocess.run(["net", "start", service_name], capture_output=True,
+                                 text=True, timeout=30)
+        if result.returncode == 0:
+            print(f"[service restarted] {service_name}")
+        else:
+            print(f"[restart-service FAILED] {service_name}: {result.stdout or result.stderr}")
+    except Exception as exc:  # noqa: BLE001 - report, don't crash the agent over one bad service name
+        print(f"[restart-service FAILED] {service_name}: {exc}")
 
 
 def _reload(config_path, api, server_id, token, interval):
@@ -1442,9 +1542,17 @@ if __name__ == "__main__":
     p_run.add_argument("--api", default="http://127.0.0.1:5000/api")
     p_run.add_argument("--interval", default=60, type=int)
 
+    # Internal only: the helper process _capture_screenshot_bytes launches
+    # into the logged-in user's own session to actually see their screen.
+    # Not something a person runs by hand.
+    p_capture = sub.add_parser("_capture-to")
+    p_capture.add_argument("path")
+
     args = parser.parse_args()
     if args.command == "enroll":
         enroll(args.api, args.admin_token, args.interval, args.config)
+    elif args.command == "_capture-to":
+        _capture_to_file(args.path)
     else:
         if args.server_id and args.token:
             run(args.api, args.server_id, args.token, args.interval, config_path=args.config)
