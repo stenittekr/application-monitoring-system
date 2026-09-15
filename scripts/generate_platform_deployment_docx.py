@@ -126,7 +126,8 @@ h2("1", "Software prerequisites and dependencies")
 bullets([
     "Windows Server, Python 3.10 or newer",
     "All packages in backend/requirements.txt (installed via a single pip command) \u2014 "
-    "including waitress (a production-grade WSGI server) and pywin32 for the Windows Service",
+    "including cheroot (a production-grade, TLS-capable WSGI server) and pywin32 for the "
+    "Windows Service",
     "Administrator rights, needed only once, to register the Windows Service",
 ])
 
@@ -174,7 +175,7 @@ table(
         ["Install command", "python platform_service.py --startup auto install"],
         ["Start/stop commands", "python platform_service.py start / stop"],
         ["Uninstall command", "python platform_service.py remove (after stopping it)"],
-        ["Serves via", "waitress (a real WSGI server) \u2014 not Flask's development server, which is not meant for production traffic"],
+        ["Serves via", "cheroot (a real, TLS-capable WSGI server) \u2014 not Flask's development server, which is not meant for production traffic"],
     ],
 )
 

@@ -41,6 +41,10 @@ client-installer/install-log.txt
 # On-demand remote screenshots - live, per-server, overwritten each time
 backend/screenshots/
 
+# TLS private key + cert - generated per-deployment, never shared across
+# environments and never committed
+backend/certs/
+
 # Secret/credential files (none currently exist, kept as a safety net)
 *.pem
 *.key

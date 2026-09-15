@@ -29,8 +29,11 @@ python run.py
 ```
 
 Or just run `scripts\start_backend.bat`, which does the above. For real
-deployment (not `python run.py`'s dev server), put it behind a production
-WSGI server (e.g. `waitress` on Windows) and a reverse proxy.
+deployment (not `python run.py`'s dev server), run `platform_service.py`
+instead - it serves via `cheroot` (a production WSGI server, TLS built in)
+as a Windows Service. See `.env.example` for the TLS_CERT_FILE/TLS_KEY_FILE
+settings; `scripts\generate_dev_cert.ps1` makes a self-signed one to start
+with.
 
 ## 3. Monitoring worker
 
