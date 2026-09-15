@@ -33,7 +33,18 @@ import requests
 
 import agent_config
 
-AGENT_VERSION = "0.21.0"
+AGENT_VERSION = "0.22.0"
+
+# The platform's own certificate is self-signed until it is replaced with one
+# from a real (internal AD or public) CA - see scripts/generate_dev_cert.ps1's
+# comment. Every request here would otherwise fail TLS verification against
+# it, which would look identical to the platform being unreachable. Trusting
+# any certificate is the deliberate, documented trade-off for now; once a
+# properly-issued certificate is in place there is no reason to keep this on.
+_VERIFY_TLS = False
+if not _VERIFY_TLS:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # A heartbeat that fails to send is queued locally rather than dropped, so a
 # blip in backend/network availability doesn't silently lose evidence that
@@ -1173,7 +1184,8 @@ def enroll(api, admin_token, interval=60, config_path=agent_config.DEFAULT_CONFI
         "heartbeat_interval_seconds": interval,
     }
     resp = requests.post(f"{api}/servers/enroll", json=payload,
-                          headers={"Authorization": f"Bearer {admin_token}"}, timeout=10)
+                          headers={"Authorization": f"Bearer {admin_token}"}, timeout=10,
+                          verify=_VERIFY_TLS)
     resp.raise_for_status()
     data = resp.json()["data"]
 
@@ -1252,6 +1264,7 @@ def send_heartbeat(api, server_id, token, metrics):
             json={"server_id": server_id, **metrics},
             headers={"X-Agent-Token": token},
             timeout=10,
+            verify=_VERIFY_TLS,
         )
         if resp.ok:
             command = None
@@ -1298,7 +1311,7 @@ def _download_update(api, token, server_id, command):
     import shutil
 
     resp = requests.get(f"{api}/agent/download", params={"server_id": server_id},
-                         headers={"X-Agent-Token": token}, timeout=30)
+                         headers={"X-Agent-Token": token}, timeout=30, verify=_VERIFY_TLS)
     resp.raise_for_status()
     content = resp.content
     digest = hashlib.sha256(content).hexdigest()
@@ -1383,7 +1396,8 @@ def _upload_screenshot(api, token, server_id):
     try:
         image = _capture_screenshot_bytes()
         resp = requests.post(f"{api}/agent/screenshot", params={"server_id": server_id},
-                              headers={"X-Agent-Token": token}, data=image, timeout=30)
+                              headers={"X-Agent-Token": token}, data=image, timeout=30,
+                              verify=_VERIFY_TLS)
         resp.raise_for_status()
         print("[screenshot uploaded]")
     except Exception as exc:  # noqa: BLE001 - every failure mode here is "nothing to show"

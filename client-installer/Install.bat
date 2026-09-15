@@ -164,7 +164,10 @@ if errorlevel 1 (
 
 echo  Enrolling ...
 echo %TIME%  enrol >> "%LOG%"
-"!PY!" agent.py enroll --admin-token "!TOKEN!" --api "http://%PLATFORM%/api" >> "%LOG%" 2>&1
+REM https: the platform now refuses plaintext HTTP by default (see
+REM platform_service.py) - a fleet still pointed at http:// would never
+REM enrol or heartbeat again the moment that ships.
+"!PY!" agent.py enroll --admin-token "!TOKEN!" --api "https://%PLATFORM%/api" >> "%LOG%" 2>&1
 if errorlevel 1 (
     echo  [X] Enrolment failed.
     echo      Either the token expired - log in again for a fresh one -
